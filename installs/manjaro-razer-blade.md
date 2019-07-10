@@ -167,4 +167,10 @@ yay -S polychromatic
 *Reboot* for the drivers to take effect. Then run the
 `Polychromatic Tray Applet` and you're good.
 
+## Setup git
+```
+git config --global user.email "garrett.malmquist@gmail.com"
+git config --global user.name "Garrett Malmquist"
+git config --global core.editor vim
+```
 

@@ -174,3 +174,13 @@ git config --global user.name "Garrett Malmquist"
 git config --global core.editor vim
 ```
 
+## Install Xclip
+```
+yay -S xclip
+```
+
+## Create SSH Keys
+```
+ssh-keygen
+```
+And [upload to github](https://github.com/settings/keys) the contents of `~/.ssh/id_rsa.pub`.

@@ -184,3 +184,36 @@ yay -S xclip
 ssh-keygen
 ```
 And [upload to github](https://github.com/settings/keys) the contents of `~/.ssh/id_rsa.pub`.
+Also uploaded to gitlab, but gitlab's ssh remote doesn't seem to work well, so I'm using https
+anyway :/.
+
+## Install Java
+Downloaded latest java jdk8 tar.gz from oracle.
+```
+cd /usr/lib
+sudo mkdir jvm
+cd jvm
+tar -xzvf ~/Downloads/jdk-8u211-linux-i586.tar.gz
+```
+
+Then added this to the end of `/etc/profile`:
+```
+JAVA_HOME='/usr/lib/jvm/jdk1.8.0_211'
+PATH="$PATH:$JAVA_HOME/bin"
+export JAVA_HOME
+export PATH
+```
+
+Have to restart the terminal to take effect, or
+just:
+```
+source /etc/profile
+source ~/.profile
+source ~/.bashrc
+```
+
+## Add git bash completion
+Append to `~/.bashrc`:
+```
+source /usr/share/git/completion/git-completion.bash
+```

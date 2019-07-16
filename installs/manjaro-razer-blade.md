@@ -270,3 +270,13 @@ yay -S multimc5
 ```
 
 Selected the option to use jre8-openjdk and jdk8-openjdk.
+
+Then hit super and ran MultiMC. On initial setup it asked
+which installed JDK to use, and I picked the oracle jdk8
+I had already installed, rather than using the openjdk
+one that the package manager installed.
+
+However, upon creating a Minecraft vanilla instance and
+launching it, it failed to launch due to invalid heap size.
+Maybe I accidentally installed a 32 bit jvm? Not sure, but
+I switched to openjdk8 and it was able to launch it.

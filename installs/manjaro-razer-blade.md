@@ -217,3 +217,56 @@ Append to `~/.bashrc`:
 ```
 source /usr/share/git/completion/git-completion.bash
 ```
+
+## Install IntelliJ
+Download [https://download-cf.jetbrains.com/idea/ideaIC-2019.1.3.tar.gz].
+```
+cd /usr/lib
+sudo tar -xzvf ~/Downloads/ideaIC-2019.1.3.tar.gz
+```
+
+Create `/usr/local/bin/idea` with:
+```
+#!/bin/bash
+/usr/lib/idea-IC-191.7479.19/bin/idea.sh "$@"
+```
+
+```
+sudo chmod +x /usr/local/bin/idea
+```
+
+## Installing Software
+```
+yay -S inkscape
+yay -S gimp
+```
+
+## Disabled tmux mouse mode
+I decided I didn't like it.
+
+Commented line out of tmux conf, then ran:
+```
+setw -g mouse off
+```
+
+## Japanese Keyboard Input
+```
+sudo pacman -S ibus
+yay -S ibus-mozc
+```
+Widget shows up in taskbar, but doesn't do anything currently.
+
+Added this:
+```
+# /etc/profile
+export GTK_IM_MODULE=ibus
+export XMODIFIERS=@im=ibus
+export QT_IM_MODULE=ibus
+```
+
+## MultiMC
+```
+yay -S multimc5
+```
+
+Selected the option to use jre8-openjdk and jdk8-openjdk.

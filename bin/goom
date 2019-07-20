@@ -1,0 +1,272 @@
+#!/usr/bin/env python
+from __future__ import print_function, with_statement
+
+import json
+import os
+import re
+import sys
+
+from collections import namedtuple
+from contextlib import contextmanager
+from hashlib import sha1
+from subprocess import Popen, PIPE, check_output
+from textwrap import dedent
+
+
+WINDOW_PATTERN = re.compile(r'Window\s+(?P<id>\d+)')
+POSITION_PATTERN = re.compile(r'Position:\s+(?P<x>\d+),(?P<y>\d+)\s+[(]screen:\s+(?P<screen>\d+)[)]')
+GEOMETRY_PATTERN = re.compile(r'Geometry:\s+(?P<width>\d+)x(?P<height>\d+)')
+PROP_ONELINE = re.compile(r'(?P<name>[a-zA-Z0-9_]+)[(](?P<type>[a-zA-Z0-9_]+)[)]\s+=\s*(?P<value>.*)')
+PROP_MULTILINE = re.compile(r'(?P<name>[a-zA-Z0-9_]+)[(](?P<type>[a-zA-Z0-9_]+)[)]:\s*(?P<value>.*)')
+
+
+class Window(object):
+  def __init__(self, id):
+    self.id = id
+    self._geometry = None
+    self._props = None
+
+  @property
+  def geometry(self):
+    if self._geometry is None:
+      self._geometry = get_geometry(self.id)
+    return self._geometry
+
+  @property
+  def props(self):
+    if self._props is None:
+      self._props = get_window_props(self.id)
+    return self._props
+
+  @property
+  def desktop(self):
+    return self.props.get('_NET_WM_DESKTOP')
+
+  @property
+  def allowed_actions(self):
+    return self.props.get('_NET_WM_ALLOWED_ACTIONS', '').split(', ')
+
+  @property
+  def role(self):
+    roles = self.props.get('WM_WINDOW_ROLE', [])
+    return roles[0] if roles else ''
+
+  @property
+  def classes(self):
+    return self.props.get('WM_CLASS', [])
+
+  @property
+  def name(self):
+    for name in self.props.get('_NET_WM_NAME', []):
+      return name
+    for name in self.props.get('WM_NAME', []):
+      return name
+    return ''
+
+  @property
+  def pid(self):
+    return self.props.get('_NET_WM_PID')
+
+  @property
+  def state(self):
+    return self.props.get('_NET_WM_STATE') or self.props.get('WM_STATE')
+
+
+class Geometry(object):
+  def __init__(self, id, x=None, y=None, width=None, height=None, screen=None):
+    self.id = id
+    self.x = x
+    self.y = y
+    self.width = width
+    self.height = height
+    self.screen = screen
+
+  def __repr__(self):
+    return dedent('''
+      Geom(
+        id = {id}
+        screen = {screen}
+        x = {x}
+        y = {y}
+        width = {width}
+        height = {height}
+      )
+    ''').strip().format(**self.as_dict())
+
+  def as_dict(self):
+    return {
+      'id': self.id,
+      'x': self.x,
+      'y': self.y,
+      'width': self.width,
+      'height': self.height,
+      'screen': self.screen,
+    }
+
+
+def help(commands):
+  print(dedent('''
+    Usage:
+      goom <command> <args> <--flags>
+  ''').strip())
+  print()
+  print('  Commands:')
+  for command in commands:
+    print('    {}'.format(command))
+
+
+def save_window_state(positional, flags):
+  snapshot_name = positional[0] if positional else None
+  if not snapshot_name:
+    raise ValueError('Snapshot name is required.')
+  hasher = sha1()
+  hasher.update(snapshot_name.encode('utf8'))
+  sid = hasher.hexdigest()
+  windows = get_desktop_windows()
+  with open_cache_file('snapshot/{}.json'.format(sid), 'w') as f:
+    f.write(json.dumps({
+      'name': snapshot_name,
+      'windows': [{
+        'geometry': w.geometry.as_dict(),
+        'role': w.role,
+        'name': w.name,
+        'classes': w.classes,
+        'state': w.state,
+      } for w in windows],
+    }, indent=2, sort_keys=True))
+
+
+def print_window_props(positional, flags):
+  for id in positional:
+    print(json.dumps(get_window_props(id), indent=2, sort_keys=True))
+
+
+@contextmanager
+def open_cache_file(name, mode):
+  path = os.path.expanduser(os.path.join('~/.cache/goom', name))
+  if not os.path.exists(os.path.dirname(path)):
+    os.makedirs(os.path.dirname(path))
+  with open(path, mode) as f:
+    yield f
+
+
+def get_geometry(wid):
+  geom = Geometry(wid)
+  for line in xdotool('getwindowgeometry', wid).split('\n'):
+    wpm = WINDOW_PATTERN.search(line)
+    if wpm is not None:
+      geom.id = wpm.group('id')
+      continue
+    ppm = POSITION_PATTERN.search(line)
+    if ppm is not None:
+      geom.x = ppm.group('x')
+      geom.y = ppm.group('y')
+      geom.screen = ppm.group('screen')
+      continue
+    gpm = GEOMETRY_PATTERN.search(line)
+    if gpm is not None:
+      geom.width = gpm.group('width')
+      geom.height = gpm.group('height')
+  return geom
+
+
+def get_desktop_windows():
+  """Get windows for the active desktop."""
+  desktop = xdotool('get_desktop').strip()
+  results = []
+  for id in get_all_window_ids():
+    window = Window(id)
+    if window.desktop != desktop:
+      continue
+    if '_NET_WM_ACTION_MOVE' not in window.allowed_actions:
+      continue
+    results.append(window)
+  return results
+
+
+def get_desktop_for_window(id):
+  desktop = get_window_props(id).get('_NET_WM_DESKTOP')
+  if desktop is None:
+    raise ValueError('Could not identify desktop for {}'.format(id))
+  return desktop
+
+
+def get_window_props(id):
+  current_prop_name = None
+  current_prop_lines = None
+  props = {}
+  for line in xprop('-id', id).split('\n'):
+    match_oneline = PROP_ONELINE.match(line)
+    match_multiline = PROP_MULTILINE.match(line)
+    if match_oneline or match_multiline:
+      if current_prop_lines is not None:
+        props[current_prop_name] = '\n'.join(current_prop_lines)
+        current_prop_names, current_prop_lines = None, None
+    else:
+      if current_prop_lines is not None:
+        current_prop_lines.append(line)
+      continue
+    match = match_oneline if match_oneline else match_multiline
+    if match_oneline:
+      raw_value = match.group('value')
+      value = raw_value
+      if match.group('type') == 'STRING' or match.group('type') == 'UTF8_STRING':
+        value = json.loads('[{}]'.format(raw_value))
+      props[match.group('name')] = value
+    else:
+      current_prop_name = match.group('name')
+      current_prop_lines = [match.group('value')]
+  if current_prop_lines is not None:
+    props[current_prop_name] = '\n'.join(current_prop_lines)
+  return { p: (dedent(value).strip() if isinstance(value, str) else value) for p, value in props.items() }
+
+
+def get_all_window_ids():
+  for line in xprop('-root').split('\n'):
+    if line.startswith('_NET_CLIENT_LIST(WINDOW):'):
+      return [int(s, 0) for s in line[line.find('#') + 1:].strip().split(', ')]
+  raise ValueError('Failed to find window ids.') 
+
+
+def xprop(*cmd):
+  command = ['xprop']
+  command.extend(map(str, cmd))
+  return check_output(command).decode('utf-8').strip()
+
+
+def xdotool(*cmd):
+  command = ['xdotool']
+  command.extend(map(str, cmd))
+  return check_output(command).decode('utf-8').strip()
+
+
+def main(positional, flags):
+  commands = {
+    'save-window-state': save_window_state,
+    'print-window-props': print_window_props,
+  }
+  if not positional:
+    help(sorted(commands))
+    return
+  i = 0
+  while i < len(positional):
+    pos = positional[i]
+    if pos in commands:
+      commands[pos](positional[i + 1:], flags)
+      return
+    i += 1
+
+if __name__ == '__main__':
+  positional = []
+  flags = {}
+  for a in sys.argv[1:]:
+    if a.startswith('-'):
+      a = a.lstrip('-')
+      eq = a.find('=')
+      if eq > 0:
+        flag[a[:eq]] = a[eq:]
+      else:
+        flag[a] = True
+    else:
+      positional.append(a)
+  main(positional, flags)

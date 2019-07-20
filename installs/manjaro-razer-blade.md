@@ -280,3 +280,63 @@ However, upon creating a Minecraft vanilla instance and
 launching it, it failed to launch due to invalid heap size.
 Maybe I accidentally installed a 32 bit jvm? Not sure, but
 I switched to openjdk8 and it was able to launch it.
+
+## Window Management Stuff
+Install `xdotool` to allow automated X window management.
+```
+yay -S xdotool
+```
+
+Bind window management keys mirroring my moom setup, by
+opening the `System Settings` menu, and adding new
+custom shortcuts at `Shortcuts > Custum Shortcuts`. I put
+the shortcuts in a new group called "Goom".
+
+### Bind CTRL 1, 2, 3 to vertical thirds
+`ctrl+1`
+```
+xdotool getactivewindow windowmove 0 0 windowsize 33% 100%
+```
+
+`ctrl+2`
+```
+xdotool getactivewindow windowmove 33% 0 windowsize 33% 100%
+```
+
+`ctrl+3`
+```
+xdotool getactivewindow windowmove 66% 0 windowsize 33% 100%
+```
+
+### Bind CTRL 4, 5 to first and last vertical sixths
+`ctrl+4`
+```
+xdotool getactivewindow windowmove 0 0 windowsize 16.5% 100%
+```
+
+`ctrl+5`
+```
+xdotool getactivewindow windowmove 83.3% 0 windowsize 16.5% 100%
+```
+
+### Bind CTRL+SHIFT 1, 2, 3, 4 to vertical fourths
+`ctrl+shift+1` (`ctrl+!`)
+```
+xdotool getactivewindow windowmove 0 0 windowsize 25% 100%
+```
+
+`ctrl+shift+2` (`ctrl+@`)
+```
+xdotool getactivewindow windowmove 25% 0 windowsize 25% 100%
+```
+
+`ctrl+shift+3` (`ctrl+#`)
+```
+xdotool getactivewindow windowmove 50% 0 windowsize 25% 100%
+```
+
+`ctrl+shift+4` (`ctrl+$`)
+```
+xdotool getactivewindow windowmove 75% 0 windowsize 25% 100%
+```
+

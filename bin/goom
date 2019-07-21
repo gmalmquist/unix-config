@@ -17,6 +17,14 @@ from subprocess import Popen, PIPE, check_output
 from textwrap import dedent
 
 
+# This script does not rely on external python packages,
+# the standard libaries are sufficient. However, it does
+# require the presence of certain external libraries and
+# binaries:
+# * tk      (for GUI bindings)
+# * xprop   (to interrogate X about its windows)
+# * xdotool (to move and resize windows)
+
 # Inset for positioning windows. This accounts for window decorations the window manager adds that
 # exceed the nominal window boundaries.
 INSET = (4, 16) # x, y
@@ -360,6 +368,7 @@ class CommandServer(BaseHTTPRequestHandler):
       self.wfile.write('No such command {}'.format(command_name).encode())
       return
     try:
+      Screen.clear_cache()
       positional, flags = parse_args(command_args)
       output = commands[command_name](positional, flags)
     except Exception as e:
@@ -378,6 +387,10 @@ class Screen(object):
   This is a literal screen, as in a monitor.
   """
   _SIZES = {}
+
+  @classmethod
+  def clear_cache(cls):
+    cls._SIZES = {}
 
   def __init__(self, id):
     """Takes in the numeric id of the screen (from xprops or xdotool)."""

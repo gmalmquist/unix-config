@@ -4,6 +4,7 @@ from __future__ import print_function, with_statement
 import json
 import os
 import re
+import shutil
 import sys
 import tkinter
 import urllib.request
@@ -73,6 +74,16 @@ KEY_NORMALIZE = {
   'asterisk': '8',
   'parenleft': '9',
   'parenright': '0',
+  'Control_L': 'Control',
+  'Control_R': 'Control',
+  'Alt_L': 'Alt',
+  'Alt_R': 'Alt',
+  'Meta_L': 'Meta',
+  'Meta_R': 'Meta',
+  'Shift_L': 'Shift',
+  'Shift_R': 'Shift',
+  'Super_L': 'Super',
+  'Super_R': 'Super',
 }
 
 
@@ -176,7 +187,10 @@ class MoveAndResize(WindowAction):
     return '┃{}┃ (move and resize)'.format(''.join(columns))
 
   def serialize(self):
-    return ['MoveAndResize', self.x, self.y, self.w, self.h]
+    args = ['MoveAndResize', self.x, self.y, self.w, self.h]
+    if self.grid_spec:
+      args.append(self.grid_spec)
+    return args
 
 
 class LoadSnapshot(WindowAction):
@@ -195,7 +209,7 @@ class LoadSnapshot(WindowAction):
 
 class KeyCords(object):
   _BUILTIN = {
-    (frozenset(['c']),): MoveAndResize(100 * 1/6, 0, 100 * 4/6, 100),
+    (frozenset(['c']),): MoveAndResize(1, 0, 4, 1, '6x1'),
     (frozenset(['Left']),): MoveAndResize(0, 0, 50, 100),
     (frozenset(['Right']),): MoveAndResize(50, 0, 50, 100),
     (frozenset(['Up']),): MoveAndResize(0, 0, 100, 50),
@@ -204,10 +218,10 @@ class KeyCords(object):
     (frozenset(['Left', 'Down']),): MoveAndResize(0, 50, 50, 50),
     (frozenset(['Right', 'Up']),): MoveAndResize(50, 0, 50, 50),
     (frozenset(['Right', 'Down']),): MoveAndResize(50, 50, 50, 50),
-    (frozenset(['1']),): MoveAndResize(0, 0, 1/3*100, 100),
-    (frozenset(['2']),): MoveAndResize(0, 0, 2/3*100, 100),
-    (frozenset(['3']),): MoveAndResize(2/3*100, 0, 1/3*100, 100),
-    (frozenset(['4']),): MoveAndResize(1/3*100, 0, 2/3*100, 100),
+    (frozenset(['1']),): MoveAndResize(0, 0, 1, 3, '3x3'),
+    (frozenset(['2']),): MoveAndResize(0, 0, 2, 3, '3x3'),
+    (frozenset(['3']),): MoveAndResize(2, 0, 1, 3, '3x3'),
+    (frozenset(['4']),): MoveAndResize(1, 0, 2, 3, '3x3'),
     (frozenset(['Up']), frozenset(['Up']),): MoveAndResize(0, 0, 100, 100),
     (frozenset(['space']),): MoveAndResize(0, 0, 100, 100),
     (frozenset(['t']),): LoadSnapshot('foobar'),
@@ -218,6 +232,7 @@ class KeyCords(object):
   @classmethod
   def load(cls):
     if not os.path.exists(get_cache_file_path('settings/shortcuts.json')):
+      cls._SHORTCUTS = dict(cls._BUILTIN)
       return
     with open_cache_file('settings/shortcuts.json', 'r') as f:
       try:
@@ -238,11 +253,17 @@ class KeyCords(object):
     result['shortcuts'] = []
     for sequence in cls.get_sequences():
       result['shortcuts'].append({
-        'cords': ' '.join('+'.join(c) for c in sequence),
+        'cords': ' '.join('+'.join(sorted(c)) for c in sequence),
         'action': cls.get_command(sequence).serialize()
       })
     with open_cache_file('settings/shortcuts.json', 'w') as f:
-      f.write(json.dumps(result, indent=2, sort_keys=True))
+      f.write('{\n  "shortcuts": [')
+      for i, shortcut in enumerate(result['shortcuts']):
+        if i > 0:
+          f.write(',')
+        f.write('\n    ')
+        f.write(json.dumps(shortcut, sort_keys=True))
+      f.write('\n  ]\n}')
 
   @classmethod
   def get_sequences(cls):
@@ -529,7 +550,6 @@ class KeyCordApp(tkinter.Frame):
 
   def handle_keypress(self, event):
     key = KEY_NORMALIZE.get(event.keysym, event.keysym)
-    print('press', key)
     if self.done:
       return
     if key == 'Escape':
@@ -548,7 +568,6 @@ class KeyCordApp(tkinter.Frame):
 
   def handle_keyrelease(self, event):
     key = KEY_NORMALIZE.get(event.keysym, event.keysym)
-    print('release', key)
     if self.done or key == 'Escape':
       return
     if key in self.current_pressed:
@@ -577,7 +596,7 @@ class KeyCordApp(tkinter.Frame):
     labels = []
     for sequence in KeyCords.get_sequences():
       command = KeyCords.get_command(sequence)
-      key_text = ' '.join('+'.join(cord) for cord in sequence)
+      key_text = ' '.join('+'.join(sorted(cord)) for cord in sequence)
       cmd_text = command.render_text()
       labels.append((key_text, cmd_text))
     longest_key_text = max(len(k) for k, c in labels)
@@ -653,8 +672,10 @@ def load_window_state(positional, flags):
 
 
 def print_window_props(positional, flags):
+  results = []
   for id in positional:
-    print(json.dumps(get_window_props(id), indent=2, sort_keys=True))
+    results.append(json.dumps(get_window_props(id), indent=2, sort_keys=True))
+  return '\n'.join(results)
 
 
 def process_key_cord(positional, flags):
@@ -746,6 +767,32 @@ def move_and_resize(positional, flags):
     return
   active_window.move_and_resize(x, y, w, h)
 
+
+def backup_shortcuts(positional, flags):
+  path = get_cache_file_path('settings/shortcuts.json')
+  if os.path.exists(path):
+    shutil.copyfile(path, get_cache_file_path('settings/shortcuts.json.bak'))
+
+
+def restore_shortcuts(positional, flags):
+  path = get_cache_file_path('settings/shortcuts.json.bak')
+  if os.path.exists(path):
+    os.rename(path, get_cache_file_path('settings/shortcuts.json'))
+  KeyCords.load()
+
+
+def reset_shortcuts(positional, flags):
+  path = get_cache_file_path('settings/shortcuts.json')
+  if os.path.exists(path):
+    os.remove(path)
+  KeyCords.load()
+
+
+def print_shortcuts(positional, flags):
+  KeyCords.save()
+  with open_cache_file('settings/shortcuts.json', 'r') as f:
+    return f.read()
+ 
 
 @contextmanager
 def open_cache_file(name, mode):
@@ -874,15 +921,14 @@ def get_commands(for_server=False):
     'key-cord': process_key_cord,
     'move-and-resize': move_and_resize,
     'mar': move_and_resize,
+    'save-shortcuts': lambda _,__: KeyCords.save(),
+    'load-shortcuts': lambda _,__: KeyCords.load(),
+    'backup-shortcuts': backup_shortcuts,
+    'restore-shortcuts': restore_shortcuts,
+    'reset-shortcuts': reset_shortcuts,
+    'print-shortcuts': print_shortcuts,
   }
-  if for_server:
-    # Shortcuts live in-memory, so saving/loading only
-    # makes sense in that context.
-    commands.update({
-      'save-shortcuts': lambda _,__: KeyCords.save(),
-      'load-shortcuts': lambda _,__: KeyCords.load(),
-    })
-  else:
+  if not for_server:
     commands.update({
       'daemon': lambda pos, flags: CommandServer.start_server(),
     })

@@ -34,6 +34,46 @@ POSITION_PATTERN = re.compile(r'Position:\s+(?P<x>\d+),(?P<y>\d+)\s+[(]screen:\s
 GEOMETRY_PATTERN = re.compile(r'Geometry:\s+(?P<width>\d+)x(?P<height>\d+)')
 PROP_ONELINE = re.compile(r'(?P<name>[a-zA-Z0-9_]+)[(](?P<type>[a-zA-Z0-9_]+)[)]\s+=\s*(?P<value>.*)')
 PROP_MULTILINE = re.compile(r'(?P<name>[a-zA-Z0-9_]+)[(](?P<type>[a-zA-Z0-9_]+)[)]:\s*(?P<value>.*)')
+POS_PATTERN = re.compile('^(?P<x>\d+([.]\d+)?)\s*,\s*(?P<y>\d+([.]\d+)?)$')
+DIM_PATTERN = re.compile('^(?P<w>\d+([.]\d+)?)\s*x\s*(?P<h>\d+([.]\d+)?)$')
+ALL_PATTERN = re.compile('^(?P<x>\d+([.]\d+)?),(?P<y>\d+([.]\d+)?)\s+(?P<w>\d+([.]\d+)?)x(?P<h>\d+([.]\d+)?)$')
+INT_PATTERN = re.compile('^\d+([.]\d+)?$')
+
+# Normalize key presses.
+KEY_NORMALIZE = {
+  'KP_0': '0',
+  'KP_1': '1',
+  'KP_2': '2',
+  'KP_3': '3',
+  'KP_4': '4',
+  'KP_5': '5',
+  'KP_6': '6',
+  'KP_7': '7',
+  'KP_8': '8',
+  'KP_9': '9',
+  'KP_Insert': '0',
+  'KP_End': '1',
+  'KP_Down': '2',
+  'KP_Next': '3',
+  'KP_Left': '4',
+  'KP_Begin': '5',
+  'KP_Right': '6',
+  'KP_Home': '7',
+  'KP_Up': '8',
+  'KP_Prior': '9',
+  'KP_Enter': 'Enter',
+  'Return': 'Enter',
+  'exclam': '1',
+  'at': '2',
+  'numbersign': '3',
+  'dollar': '4',
+  'percent': '5',
+  'asciicircum': '6',
+  'ampersand': '7',
+  'asterisk': '8',
+  'parenleft': '9',
+  'parenright': '0',
+}
 
 
 class WindowAction(object):
@@ -63,14 +103,15 @@ class WindowAction(object):
 
 
 class MoveAndResize(WindowAction):
-  def __init__(self, x, y, w, h):
+  def __init__(self, x, y, w, h, grid_spec=None):
     self.x = x
     self.y = y
     self.w = w
     self.h = h
+    self.grid_spec = grid_spec
 
   def execute(self, window):
-    window.move_and_resize(self.x, self.y, self.w, self.h)
+    window.move_and_resize(self.x, self.y, self.w, self.h, self.grid_spec)
 
   def _box_art(self, y, h):
     if y < 25:
@@ -223,7 +264,10 @@ class CommandServer(BaseHTTPRequestHandler):
   def start_server(cls):
     old_pid = get_daemon_pid()
     if old_pid is not None:
-      check_output(['kill', '-9', old_pid])
+      try:
+        check_output(['kill', '-9', old_pid])
+      except:
+        pass # It probably wasn't actually running.
     with open_cache_file('daemon.pid', 'w') as f:
       f.write(str(os.getpid()))
     try:
@@ -357,7 +401,12 @@ class Window(object):
     w, h = screen.percent_to_pixel(percent_w, percent_h)
     xdotool('windowsize', self.id, w, h)
 
-  def move_and_resize(self, percent_x, percent_y, percent_w, percent_h):
+  def move_and_resize(self, percent_x, percent_y, percent_w, percent_h, grid_spec=None):
+    if grid_spec:
+      tx, ty = parse_grid_spec(grid_spec)
+      percent_x, percent_w = map(tx, (percent_x, percent_w))
+      percent_y, percent_h = map(ty, (percent_y, percent_h))
+
     screen = self.screen
     x, y = screen.percent_to_pixel(percent_x, percent_y)
     w, h = screen.percent_to_pixel(percent_w, percent_h)
@@ -479,29 +528,31 @@ class KeyCordApp(tkinter.Frame):
     self.done = False
 
   def handle_keypress(self, event):
+    key = KEY_NORMALIZE.get(event.keysym, event.keysym)
+    print('press', key)
     if self.done:
       return
-    if event.keysym == 'Escape':
+    if key == 'Escape':
       self.done = True
       self.master.destroy()
       return
-    if event.keysym == 'Enter' or event.keysym == 'Return':
+    if key == 'Enter' or key == 'Return':
       self.cords.append(frozenset(self.current_cord))
       self.current_cord = set()
       self.done = True
       self.process_cords()
       self.master.destroy()
       return
-    self.current_pressed.add(event.keysym)
-    self.current_cord.add(event.keysym)
+    self.current_pressed.add(key)
+    self.current_cord.add(key)
 
   def handle_keyrelease(self, event):
-    if self.done or event.keysym == 'Escape':
+    key = KEY_NORMALIZE.get(event.keysym, event.keysym)
+    print('release', key)
+    if self.done or key == 'Escape':
       return
-    if event.keysym in self.current_pressed:
-      self.current_pressed.remove(event.keysym)
-    else:
-      return
+    if key in self.current_pressed:
+      self.current_pressed.remove(key)
     if not self.current_pressed:
       # It would appear that this is the end
       # of a cord.
@@ -515,6 +566,7 @@ class KeyCordApp(tkinter.Frame):
     cords = tuple(frozenset(c) for c in self.cords if len(c) > 0)
     command = KeyCords.get_command(cords)
     if command is not None:
+      print('Execute', command.render_text())
       command.execute(Window(self.active_window))
     else:
       print('No commands for cord:',
@@ -611,36 +663,38 @@ def process_key_cord(positional, flags):
   key_cord_app.mainloop()
 
 
-def move_and_resize(positional, flags):
-  POS_PATTERN = re.compile('^(?P<x>\d+([.]\d+)?)\s*,\s*(?P<y>\d+([.]\d+)?)$')
-  DIM_PATTERN = re.compile('^(?P<w>\d+([.]\d+)?)\s*x\s*(?P<h>\d+([.]\d+)?)$')
-  ALL_PATTERN = re.compile('^(?P<x>\d+([.]\d+)?),(?P<y>\d+([.]\d+)?)\s+(?P<w>\d+([.]\d+)?)x(?P<h>\d+([.]\d+)?)$')
-  INT_PATTERN = re.compile('^\d+([.]\d+)?$')
+def parse_grid_spec(grid_spec=None):
+  tx = lambda x: x
+  ty = lambda y: y
+  if grid_spec is None:
+    return tx, ty
+  # We interpret "0,0" as "rows,cols", and "0x0" as "width x height"
+  m = POS_PATTERN.match(grid_spec)
+  rows, cols = None, None
+  if m:
+    rows, cols = map(int, (m.group('x'), m.group('y')))
+  m = DIM_PATTERN.match(grid_spec)
+  if m:
+    cols, rows = map(int, (m.group('w'), m.group('h')))
+  if rows is None or cols is None:
+    return dedent('''
+      Expected --grid (-g) to be in one of the formats, but was {}:
+        rows , cols
+        width x height
+    ''').format(grid_spec)
+  tx = lambda x: 100 * float(x) / int(cols)
+  ty = lambda y: 100 * float(y) / int(rows)
+  return tx, ty
+ 
 
+def move_and_resize(positional, flags):
   tx = lambda x: x
   ty = lambda y: y
 
   if flags.get('grid') or flags.get('g'):
-    grid_spec = flags.get('grid') or flags.get('g')
-    # We interpret "0,0" as "rows,cols", and "0x0" as "width x height"
-    m = POS_PATTERN.match(grid_spec)
-    rows, cols = None, None
-    if m:
-      rows, cols = map(int, (m.group('x'), m.group('y')))
-    m = DIM_PATTERN.match(grid_spec)
-    if m:
-      cols, rows = map(int, (m.group('w'), m.group('h')))
-    if rows is None or cols is None:
-      return dedent('''
-        Expected --grid (-g) to be in one of the formats, but was {}:
-          rows , cols
-          width x height
-      ''').format(grid_spec)
-    tx = lambda x: 100 * float(x) / int(cols)
-    ty = lambda y: 100 * float(y) / int(rows)
+    tx, ty = parse_grid_spec(flags.get('grid') or flags.get('g'))
 
   active_window = Window(xdotool('getactivewindow'))
-
   x, y, w, h = (-1,) * 4
 
   if len(positional) == 4 and all(map(INT_PATTERN.match, positional)):
@@ -854,10 +908,9 @@ def main(positional, flags):
         print (f.read().decode('utf-8'))
         return
     except Exception as e:
-      sys.stderr.write('Failed to issue command to daemon, falling back on direct execution.\n')
-      sys.stderr.write(str(e))
-      sys.stderr.write('\n')
+      sys.stderr.write('Daemon is not running, falling back on direct execution.\n')
       sys.stderr.flush()
+  KeyCords.load()
   output = commands[command_name](positional[1:], flags)
   if output is not None:
     print(output)

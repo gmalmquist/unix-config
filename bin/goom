@@ -320,6 +320,11 @@ class KeyChords(object):
     cls._SHORTCUTS[chords] = command
 
   @classmethod
+  def remove_shortcut(cls, chords):
+    if chords in cls._SHORTCUTS:
+      cls._SHORTCUTS.pop(chords)
+
+  @classmethod
   def load(cls):
     if not os.path.exists(get_cache_file_path('settings/shortcuts.json')):
       cls._SHORTCUTS = dict(cls._BUILTIN)
@@ -942,6 +947,7 @@ def add_shortcut(positional, flags):
     chords = KeyChords.parse_chords(' '.join(chords))
   except:
     return 'Invalid chord sequence {}'.format(' '.join(chords))
+  existing = KeyChords.get_command(chords)
   try:
     command = WindowAction.load(args)
   except Exception as e:
@@ -950,13 +956,33 @@ def add_shortcut(positional, flags):
   return dedent('''
     Added shortcut:
       key chord sequence: {}
-      action: {}
+      action: {}{}
 
     This shortcut currently only exists in memory; to save it run:
       goom save-shortcuts
   ''').strip().format(
-    KeyChords.format_chords(chords),
-    command.render_text())
+    KeyChords.format_chords(chords), command.render_text(),
+    '\n\nOverwriting previous action: {}'.format(existing.render_text())
+    if existing else '')
+
+
+def remove_shortcut(positional, flags):
+  chords = KeyChords.parse_chords(' '.join(positional))
+  command = KeyChords.get_command(chords)
+  if command is None:
+    return dedent('''
+      There is no shortcut with chord sequence {}
+    ''').strip().format(KeyChords.format_chords(chords))
+  KeyChords.remove_shortcut(chords)
+  return dedent('''
+    Removed shortcut:
+      key chord sequence: {}
+      action: {}
+
+    To save these changes, run:
+      goom save-shortcuts
+  ''').strip().format(
+    KeyChords.format_chords(chords), command.render_text())
 
 # ==== End CLI command functions ====
 
@@ -1121,6 +1147,7 @@ def get_commands(for_server=False):
     CliCommand('reset-shortcuts', 'Reset shortcuts to default.', reset_shortcuts),
     CliCommand('print-shortcuts', 'Print contents of current shortcuts.', print_shortcuts),
     CliCommand('add-shortcut', 'Create a new keyboard shortcut.', add_shortcut),
+    CliCommand('remove-shortcut', 'Remove a keyboard shortcut.', remove_shortcut),
   ]
   if not for_server:
     commands.extend([

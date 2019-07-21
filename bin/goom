@@ -109,7 +109,7 @@ class MoveAndResize(WindowAction):
         pair = '{}{}'.format(columns[i], columns[i + 1]).replace('⠀', ' ')
         shortened.append(collapse.get(pair, columns[i]))
       columns = shortened
-    return '⢸{}⡇'.format(''.join(columns))
+    return '┃{}┃'.format(''.join(columns))
 
 
 class KeyCords(object):
@@ -416,9 +416,16 @@ class KeyCordApp(tkinter.Frame):
         ' '.join(','.join(c) for c in self.cords))
 
   def create_widgets(self):
+    labels = []
     for sequence in KeyCords.get_sequences():
-      text = ' '.join('+'.join(cord) for cord in sequence)
-      w = tkinter.Label(self, text=text, anchor='w')
+      command = KeyCords.get_command(sequence)
+      key_text = ' '.join('+'.join(cord) for cord in sequence)
+      cmd_text = command.render_text()
+      labels.append((key_text, cmd_text))
+    longest_key_text = max(len(k) for k, c in labels)
+    for key_text, cmd_text in labels:
+      text = '{}: {}{}'.format(key_text, ' '*(longest_key_text - len(key_text)), cmd_text)
+      w = tkinter.Label(self, text=text, anchor='w', font=('Noto Mono', 10))
       w.pack(side='top', fill=tkinter.X)
     self.quit = tkinter.Button(self,
       text='QUIT',

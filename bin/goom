@@ -114,8 +114,6 @@ class WindowAction(object):
   These actions typically operate on the active window, but
   they don't have to.
   """
-  def __init__(self):
-    pass
 
   def execute(self, window):
     """Execute this action on the given Window instance."""
@@ -245,11 +243,50 @@ class LoadSnapshot(WindowAction):
     return ['LoadSnapshot', self.name]
 
 
+class SaveSnapshot(WindowAction):
+  """Window action that saves a snapshot.
+
+  Doesn't care what the active window is.
+  """
+
+  def __init__(self, name):
+    self.name = name
+
+  def execute(self, window):
+    save_window_state([self.name], {})
+
+  def render_text(self):
+    return 'Save Snapshot "{}"'.format(self.name)
+
+  def serialize(self):
+    return ['SaveSnapshot', self.name]
+
+
+class SwapWindows(WindowAction):
+  """Window action that swaps the positions of two windows."""
+
+  def execute(self, active):
+    selected = Window(xdotool('selectwindow'))
+    sgeom = selected.geometry
+    ageom = active.geometry
+    selected.move_and_resize(
+      ageom.x, ageom.y, ageom.width, ageom.height, exact_pixels=True)
+    active.move_and_resize(
+      sgeom.x, sgeom.y, sgeom.width, sgeom.height, exact_pixels=True)
+
+  def render_text(self):
+    return 'Swap Windows'
+
+  def serialize(self):
+    return ['SwapWindows']
+
+
 class KeyChords(object):
   """Stores keyboard shortcuts in class variables."""
 
   # Defaults if ~/.cache/goom/settings/shortcuts.json does not exist.
   _BUILTIN = {
+    (frozenset(['s']),): SwapWindows(),
     (frozenset(['c']),): MoveAndResize(1, 0, 4, 1, '6x1'),
     (frozenset(['Left']),): MoveAndResize(0, 0, 50, 100),
     (frozenset(['Right']),): MoveAndResize(50, 0, 50, 100),
@@ -271,6 +308,18 @@ class KeyChords(object):
   _SHORTCUTS = dict(_BUILTIN)
 
   @classmethod
+  def parse_chords(cls, shortcut_text):
+    return tuple(frozenset(chord.split('+')) for chord in shortcut_text.split(' '))
+
+  @classmethod
+  def format_chords(cls, chords):
+    return ' '.join('+'.join(sorted(chord, key=lambda stroke: (-len(stroke), stroke))) for chord in chords)
+
+  @classmethod
+  def add_shortcut(cls, chords, command):
+    cls._SHORTCUTS[chords] = command
+
+  @classmethod
   def load(cls):
     if not os.path.exists(get_cache_file_path('settings/shortcuts.json')):
       cls._SHORTCUTS = dict(cls._BUILTIN)
@@ -284,7 +333,7 @@ class KeyChords(object):
         return
     cls._SHORTCUTS = {}
     for shortcut in data.get('shortcuts', []):
-      chords = tuple(frozenset(chord.split('+')) for chord in shortcut.get('chords', '').split(' '))
+      chords = cls.parse_chords(shortcut.get('chords', ''))
       command = WindowAction.load(shortcut.get('action'))
       cls._SHORTCUTS[chords] = command
 
@@ -294,7 +343,7 @@ class KeyChords(object):
     result['shortcuts'] = []
     for sequence in cls.get_sequences():
       result['shortcuts'].append({
-        'chords': ' '.join('+'.join(sorted(c)) for c in sequence),
+        'chords': KeyChords.format_chords(sequence),
         'action': cls.get_command(sequence).serialize()
       })
     with open_cache_file('settings/shortcuts.json', 'w') as f:
@@ -507,7 +556,13 @@ class Window(object):
     w, h = screen.percent_to_pixel(percent_w, percent_h)
     xdotool('windowsize', self.id, w, h)
 
-  def move_and_resize(self, percent_x, percent_y, percent_w, percent_h, grid_spec=None):
+  def move_and_resize(self,
+      percent_x,
+      percent_y,
+      percent_w,
+      percent_h,
+      grid_spec=None,
+      exact_pixels=False):
     if grid_spec:
       tx, ty = parse_grid_spec(grid_spec)
       percent_x, percent_w = map(tx, (percent_x, percent_w))
@@ -522,6 +577,10 @@ class Window(object):
     y += inset_y
     w -= inset_x * 2
     h -= inset_y * 2
+
+    if exact_pixels:
+      # Input parameters were actually literal pixels.
+      x, y, w, h = map(float, (percent_x, percent_y, percent_w, percent_h))
 
     if float(percent_x) < 0:
       x = int(self.geometry.x)
@@ -678,14 +737,14 @@ class KeyChordApp(tkinter.Frame):
       command.execute(Window(self.active_window))
     else:
       print('No commands for chord:',
-        ' '.join('+'.join(c) for c in self.chords))
+        KeyChords.format_chords(self.chords))
 
   def create_widgets(self):
     self.winfo_toplevel().title('goom - totally not moom')
     labels = []
     for sequence in KeyChords.get_sequences():
       command = KeyChords.get_command(sequence)
-      key_text = ' '.join('+'.join(sorted(chord)) for chord in sequence)
+      key_text = KeyChords.format_chords(sequence)
       cmd_text = command.render_text()
       labels.append((key_text, cmd_text))
     longest_key_text = max(len(k) for k, c in labels)
@@ -861,7 +920,44 @@ def print_shortcuts(positional, flags):
   KeyChords.save()
   with open_cache_file('settings/shortcuts.json', 'r') as f:
     return f.read()
- 
+
+
+def add_shortcut(positional, flags):
+  if '--' not in positional:
+    return dedent('''
+      Example Usage:
+        add-shortcut Control+Shift+K Alt+M -- MoveAndResize 2 0 1 1 3x2
+    ''').strip()
+  chords, args = [], []
+  hyphens = False
+  for arg in positional:
+    if hyphens:
+      args.append(arg)
+      continue
+    if arg == '--':
+      hyphens = True
+      continue
+    chords.append(arg)
+  try:
+    chords = KeyChords.parse_chords(' '.join(chords))
+  except:
+    return 'Invalid chord sequence {}'.format(' '.join(chords))
+  try:
+    command = WindowAction.load(args)
+  except Exception as e:
+    return 'Invalid command: {}'.format(e)
+  KeyChords.add_shortcut(chords, command)
+  return dedent('''
+    Added shortcut:
+      key chord sequence: {}
+      action: {}
+
+    This shortcut currently only exists in memory; to save it run:
+      goom save-shortcuts
+  ''').strip().format(
+    KeyChords.format_chords(chords),
+    command.render_text())
+
 # ==== End CLI command functions ====
 
 
@@ -1024,6 +1120,7 @@ def get_commands(for_server=False):
     CliCommand('restore-shortcuts', 'Restore the shortcuts file from backup.', restore_shortcuts),
     CliCommand('reset-shortcuts', 'Reset shortcuts to default.', reset_shortcuts),
     CliCommand('print-shortcuts', 'Print contents of current shortcuts.', print_shortcuts),
+    CliCommand('add-shortcut', 'Create a new keyboard shortcut.', add_shortcut),
   ]
   if not for_server:
     commands.extend([
@@ -1080,7 +1177,7 @@ def parse_args(sargs):
   positional = []
   flags = {}
   for a in sargs:
-    if a.startswith('-'):
+    if a.startswith('-') and len(a.lstrip('-')) > 0:
       a = a.lstrip('-')
       eq = a.find('=')
       if eq > 0:

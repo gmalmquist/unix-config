@@ -359,11 +359,11 @@ Changed all the shortcuts in `window management` to `goom` ones, and also added:
 
 `Super+Shift+M`
 ```
-goom key-cord
+goom key-chord
 ```
 
 `Alt+Shift+M`
 ```
-goom key-cord
+goom key-chord
 ```
 

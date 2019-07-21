@@ -21,7 +21,7 @@ from textwrap import dedent
 # exceed the nominal window boundaries.
 INSET = (4, 16) # x, y
 
-# Don't allow sequences of hotkey cords longer than this.
+# Don't allow sequences of hotkey chords longer than this.
 MAX_CORD_SEQUENCE = 4
 
 # Port for the daemon's command server to listen on.
@@ -233,7 +233,7 @@ class LoadSnapshot(WindowAction):
     return ['LoadSnapshot', self.name]
 
 
-class KeyCords(object):
+class KeyChords(object):
   """Stores keyboard shortcuts in class variables."""
 
   # Defaults if ~/.cache/goom/settings/shortcuts.json does not exist.
@@ -272,9 +272,9 @@ class KeyCords(object):
         return
     cls._SHORTCUTS = {}
     for shortcut in data.get('shortcuts', []):
-      cords = tuple(frozenset(cord.split('+')) for cord in shortcut.get('cords', '').split(' '))
+      chords = tuple(frozenset(chord.split('+')) for chord in shortcut.get('chords', '').split(' '))
       command = WindowAction.load(shortcut.get('action'))
-      cls._SHORTCUTS[cords] = command
+      cls._SHORTCUTS[chords] = command
 
   @classmethod
   def save(cls):
@@ -282,7 +282,7 @@ class KeyCords(object):
     result['shortcuts'] = []
     for sequence in cls.get_sequences():
       result['shortcuts'].append({
-        'cords': ' '.join('+'.join(sorted(c)) for c in sequence),
+        'chords': ' '.join('+'.join(sorted(c)) for c in sequence),
         'action': cls.get_command(sequence).serialize()
       })
     with open_cache_file('settings/shortcuts.json', 'w') as f:
@@ -296,11 +296,11 @@ class KeyCords(object):
 
   @classmethod
   def get_sequences(cls):
-    return sorted(cls._SHORTCUTS, key=lambda cord: (len(cord),) + tuple(map(len, cord)))
+    return sorted(cls._SHORTCUTS, key=lambda chord: (len(chord),) + tuple(map(len, chord)))
 
   @classmethod
-  def get_command(cls, cords):
-    key = tuple(map(frozenset, ((s.upper() for s in cs) for cs in cords)))
+  def get_command(cls, chords):
+    key = tuple(map(frozenset, ((s.upper() for s in cs) for cs in chords)))
     # Find longest trailing match.
     for sequence in reversed(cls.get_sequences()):
       seq = tuple(map(frozenset, ((s.upper() for s in cs) for cs in sequence)))
@@ -328,7 +328,7 @@ class CommandServer(BaseHTTPRequestHandler):
     with open_cache_file('daemon.pid', 'w') as f:
       f.write(str(os.getpid()))
     try:
-      KeyCords.load()
+      KeyChords.load()
       print('Starting server ...')
       server = HTTPServer(('localhost', DAEMON_PORT), cls)
       server.serve_forever()
@@ -438,12 +438,12 @@ class Window(object):
 
   @property
   def allowed_actions(self):
-    """The allowed actions that can be performed on this window, according to xprops."""
+    """The allowed actions that can be performed on this window, acchording to xprops."""
     return self.props.get('_NET_WM_ALLOWED_ACTIONS', '').split(', ')
 
   @property
   def role(self):
-    """The 'role' of this window, according to xprops.
+    """The 'role' of this window, acchording to xprops.
 
     E.g., this might be ['browser'].
     """
@@ -452,7 +452,7 @@ class Window(object):
 
   @property
   def classes(self):
-    """The 'classes' of this window, according to xpros.
+    """The 'classes' of this window, acchording to xpros.
 
     E.g., this might be ['Mozilla', 'Firefox']
     """
@@ -596,7 +596,7 @@ class Geometry(object):
     }
 
 
-class KeyCordApp(tkinter.Frame):
+class KeyChordApp(tkinter.Frame):
   """Responsible for rendering the window that captures key events for chorded hotkeys."""
 
   def __init__(self, master=None):
@@ -615,8 +615,8 @@ class KeyCordApp(tkinter.Frame):
     self.bind('<KeyRelease>', self.handle_keyrelease)
     self.bind('<FocusOut>', lambda _: self.master.destroy())
     self.focus_set()
-    self.cords = []
-    self.current_cord = set()
+    self.chords = []
+    self.current_chord = set()
     self.current_pressed = set()
     self.done = False
 
@@ -629,14 +629,14 @@ class KeyCordApp(tkinter.Frame):
       self.master.destroy()
       return
     if key == 'Enter' or key == 'Return':
-      self.cords.append(frozenset(self.current_cord))
-      self.current_cord = set()
+      self.chords.append(frozenset(self.current_chord))
+      self.current_chord = set()
       self.done = True
-      self.process_cords()
+      self.process_chords()
       self.master.destroy()
       return
     self.current_pressed.add(key)
-    self.current_cord.add(key)
+    self.current_chord.add(key)
 
   def handle_keyrelease(self, event):
     key = KEY_NORMALIZE.get(event.keysym, event.keysym)
@@ -646,29 +646,29 @@ class KeyCordApp(tkinter.Frame):
       self.current_pressed.remove(key)
     if not self.current_pressed:
       # It would appear that this is the end
-      # of a cord.
-      self.cords.append(set(self.current_cord))
-      if len(self.cords) > MAX_CORD_SEQUENCE:
-        self.cords = self.cords[1:]
-      self.current_cord = set()
-      self.process_cords()
+      # of a chord.
+      self.chords.append(set(self.current_chord))
+      if len(self.chords) > MAX_CORD_SEQUENCE:
+        self.chords = self.chords[1:]
+      self.current_chord = set()
+      self.process_chords()
 
-  def process_cords(self):
-    cords = tuple(frozenset(c) for c in self.cords if len(c) > 0)
-    command = KeyCords.get_command(cords)
+  def process_chords(self):
+    chords = tuple(frozenset(c) for c in self.chords if len(c) > 0)
+    command = KeyChords.get_command(chords)
     if command is not None:
       print('Execute', command.render_text())
       command.execute(Window(self.active_window))
     else:
-      print('No commands for cord:',
-        ' '.join('+'.join(c) for c in self.cords))
+      print('No commands for chord:',
+        ' '.join('+'.join(c) for c in self.chords))
 
   def create_widgets(self):
     self.winfo_toplevel().title('goom - totally not moom')
     labels = []
-    for sequence in KeyCords.get_sequences():
-      command = KeyCords.get_command(sequence)
-      key_text = ' '.join('+'.join(sorted(cord)) for cord in sequence)
+    for sequence in KeyChords.get_sequences():
+      command = KeyChords.get_command(sequence)
+      key_text = ' '.join('+'.join(sorted(chord)) for chord in sequence)
       cmd_text = command.render_text()
       labels.append((key_text, cmd_text))
     longest_key_text = max(len(k) for k, c in labels)
@@ -754,10 +754,10 @@ def print_window_props(positional, flags):
   return '\n'.join(results)
 
 
-def process_key_cord(positional, flags):
+def process_key_chord(positional, flags):
   tk = tkinter.Tk()
-  key_cord_app = KeyCordApp(master=tk)
-  key_cord_app.mainloop()
+  key_chord_app = KeyChordApp(master=tk)
+  key_chord_app.mainloop()
 
 
 def move_and_resize(positional, flags):
@@ -830,18 +830,18 @@ def restore_shortcuts(positional, flags):
   path = get_cache_file_path('settings/shortcuts.json.bak')
   if os.path.exists(path):
     os.rename(path, get_cache_file_path('settings/shortcuts.json'))
-  KeyCords.load()
+  KeyChords.load()
 
 
 def reset_shortcuts(positional, flags):
   path = get_cache_file_path('settings/shortcuts.json')
   if os.path.exists(path):
     os.remove(path)
-  KeyCords.load()
+  KeyChords.load()
 
 
 def print_shortcuts(positional, flags):
-  KeyCords.save()
+  KeyChords.save()
   with open_cache_file('settings/shortcuts.json', 'r') as f:
     return f.read()
  
@@ -998,11 +998,11 @@ def get_commands(for_server=False):
     CliCommand('load-snapshot', 'Loads the state of windows on the active desktop.',
       load_window_state),
     CliCommand('print-window-props', 'Dumps parsed information from xprop', print_window_props),
-    CliCommand('key-chord', 'Opens the window allowing chorded keyboard shortcuts.', process_key_cord),
+    CliCommand('key-chord', 'Opens the window allowing chorded keyboard shortcuts.', process_key_chord),
     CliCommand('move-and-resize', 'Move and resize a window.', move_and_resize),
     CliCommand('mar', 'Alias for move-and-resize.', move_and_resize),
-    CliCommand('save-shortcuts', 'Save shortcuts to disk.', lambda _,__: KeyCords.save()),
-    CliCommand('load-shortcuts', 'Load shortcuts from disk.', lambda _,__: KeyCords.load()),
+    CliCommand('save-shortcuts', 'Save shortcuts to disk.', lambda _,__: KeyChords.save()),
+    CliCommand('load-shortcuts', 'Load shortcuts from disk.', lambda _,__: KeyChords.load()),
     CliCommand('backup-shortcuts','Make a backup of the shortcuts file.', backup_shortcuts),
     CliCommand('restore-shortcuts', 'Restore the shortcuts file from backup.', restore_shortcuts),
     CliCommand('reset-shortcuts', 'Reset shortcuts to default.', reset_shortcuts),
@@ -1040,7 +1040,7 @@ def main(positional, flags):
       # killing the process.
       sys.stderr.write('Daemon is not running, falling back on direct execution.\n')
       sys.stderr.flush()
-  KeyCords.load()
+  KeyChords.load()
   output = commands[command_name](positional[1:], flags)
   if output is not None:
     print(output)

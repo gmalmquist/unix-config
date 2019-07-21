@@ -42,6 +42,10 @@ class KeyCords(object):
     pass
 
   @classmethod
+  def get_sequences(cls):
+    return sorted(cls._BUILTIN, key=lambda cord: len(cord))
+
+  @classmethod
   def get_command(cls, cords):
     key = tuple(map(frozenset, cords))
     # Find longest trailing match.
@@ -201,13 +205,13 @@ class KeyCordApp(tkinter.Frame):
     super().__init__(master)
     self.master = master
     self.active_window = xdotool('getactivewindow')
-    self.pack()
+    self.pack(fill=tkinter.X, padx=10, pady=10)
     self.create_widgets()
     screen_width = master.winfo_screenwidth()
     screen_height = master.winfo_screenheight()
-    w, h = int(screen_width/8), int(screen_height/8)
-    master.geometry('{}x{}+{}+{}'.format(
-      w, h, int(screen_width/2 - w/2), int(screen_height/2 - h/2)
+    w, h = master.winfo_reqwidth(), master.winfo_reqheight()
+    master.geometry('+{}+{}'.format(
+      int(screen_width/2 - w/2), int(screen_height/2 - h/2)
     ))
     self.bind('<KeyPress>', self.handle_keypress)
     self.bind('<KeyRelease>', self.handle_keyrelease)
@@ -259,10 +263,14 @@ class KeyCordApp(tkinter.Frame):
         ' '.join(','.join(c) for c in self.cords))
 
   def create_widgets(self):
+    for sequence in KeyCords.get_sequences():
+      text = ' '.join('+'.join(cord) for cord in sequence)
+      w = tkinter.Label(self, text=text, anchor='w')
+      w.pack(side='top', fill=tkinter.X)
     self.quit = tkinter.Button(self,
       text='QUIT',
       command=self.master.destroy)
-    self.quit.pack(side='bottom')
+    self.quit.pack(side='bottom', padx=20, pady=20)
 
 
 def help(commands):

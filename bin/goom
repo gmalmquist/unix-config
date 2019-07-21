@@ -6,6 +6,7 @@ import os
 import re
 import sys
 import tkinter
+import urllib.request
 
 from collections import namedtuple
 from contextlib import contextmanager
@@ -21,6 +22,11 @@ INSET = (4, 16) # x, y
 
 # Don't allow sequences of hotkey cords longer than this.
 MAX_CORD_SEQUENCE = 4
+
+# Port for the daemon's command server to listen on.
+# Note that the command server binds to localhost on this port, meaning that it will only accept
+# network traffic from processes running on this machine. This is good for security reasons.
+DAEMON_PORT = 8993
 
 # Regexes for parsing output from various unix utilities.
 WINDOW_PATTERN = re.compile(r'Window\s+(?P<id>\d+)')
@@ -223,7 +229,7 @@ class CommandServer(BaseHTTPRequestHandler):
     try:
       KeyCords.load()
       print('Starting server ...')
-      server = HTTPServer(('localhost', 8993), cls)
+      server = HTTPServer(('localhost', DAEMON_PORT), cls)
       server.serve_forever()
     except KeyboardInterrupt:
       print('Keyboard interrupt, shutting down.')
@@ -248,12 +254,17 @@ class CommandServer(BaseHTTPRequestHandler):
       self.end_headers()
       self.wfile.write('No such command {}'.format(command_name).encode())
       return
+    try:
+      positional, flags = parse_args(command_args)
+      output = commands[command_name](positional, flags)
+    except Exception as e:
+      output = str(e)
+
     self.send_response(200)
     self.send_header('content-type', 'text/plain')
     self.end_headers()
-    self.wfile.write('Ok, executing {}'.format(command_name).encode())
-    positional, flags = parse_args(command_args)
-    commands[command_name](positional, flags)
+    output_width = 0 if output is None else max(len(line) for line in output.split('\n'))
+    self.wfile.write('Executed: {}\n{}\n{}'.format(' '.join([command_name]+command_args), '=' * output_width, output or '').encode())
 
 
 class Screen(object):
@@ -356,6 +367,15 @@ class Window(object):
     y += inset_y
     w -= inset_x * 2
     h -= inset_y * 2
+
+    if float(percent_x) < 0:
+      x = int(self.geometry.x)
+    if float(percent_y) < 0:
+      y = int(self.geometry.y)
+    if float(percent_w) < 0:
+      w = int(self.geometry.width)
+    if float(percent_h) < 0:
+      h = int(self.geometry.height)
 
     xdotool('windowsize', self.id, w, h)
     xdotool('windowmove', self.id, x, y)
@@ -591,6 +611,88 @@ def process_key_cord(positional, flags):
   key_cord_app.mainloop()
 
 
+def move_and_resize(positional, flags):
+  POS_PATTERN = re.compile('^(?P<x>\d+([.]\d+)?)\s*,\s*(?P<y>\d+([.]\d+)?)$')
+  DIM_PATTERN = re.compile('^(?P<w>\d+([.]\d+)?)\s*x\s*(?P<h>\d+([.]\d+)?)$')
+  ALL_PATTERN = re.compile('^(?P<x>\d+([.]\d+)?),(?P<y>\d+([.]\d+)?)\s+(?P<w>\d+([.]\d+)?)x(?P<h>\d+([.]\d+)?)$')
+  INT_PATTERN = re.compile('^\d+([.]\d+)?$')
+
+  tx = lambda x: x
+  ty = lambda y: y
+
+  if flags.get('grid') or flags.get('g'):
+    grid_spec = flags.get('grid') or flags.get('g')
+    # We interpret "0,0" as "rows,cols", and "0x0" as "width x height"
+    m = POS_PATTERN.match(grid_spec)
+    rows, cols = None, None
+    if m:
+      rows, cols = map(int, (m.group('x'), m.group('y')))
+    m = DIM_PATTERN.match(grid_spec)
+    if m:
+      cols, rows = map(int, (m.group('w'), m.group('h')))
+    if rows is None or cols is None:
+      return dedent('''
+        Expected --grid (-g) to be in one of the formats, but was {}:
+          rows , cols
+          width x height
+      ''').format(grid_spec)
+    tx = lambda x: 100 * float(x) / int(cols)
+    ty = lambda y: 100 * float(y) / int(rows)
+
+  active_window = Window(xdotool('getactivewindow'))
+
+  x, y, w, h = (-1,) * 4
+
+  if len(positional) == 4 and all(map(INT_PATTERN.match, positional)):
+    x, y, w, h = positional
+    x, w = map(tx, (x, w))
+    y, h = map(ty, (y, h))
+  elif len(positional) == 2 and all(map(INT_PATTERN.match, positional)):
+    x, y = positional
+    x = tx(x) ; y = ty(y)
+  elif len(positional) == 2 and POS_PATTERN.match(positional[0]) and DIM_PATTERN.match(positional[1]):
+    pos = POS_PATTERN.match(positional[0])
+    dim = DIM_PATTERN.match(positional[1])
+    x, y = pos.group('x'), pos.group('y')
+    w, h = dim.group('w'), dim.group('h')
+    x, w = map(tx, (x, w))
+    y, h = map(ty, (y, h))
+  elif len(positional) == 1 and ALL_PATTERN.match(positional[0]):
+    match = ALL_PATTERN.match(positional[0])
+    x, y = match.group('x'), match.group('y')
+    w, h = match.group('w'), match.group('h')
+    x, w = map(tx, (x, w))
+    y, h = map(ty, (y, h))
+  elif len(positional) == 1 and POS_PATTERN.match(positional[0]):
+    pos = POS_PATTERN.match(positional[0])
+    x, y = pos.group('x'), pos.group('y')
+    x = tx(x) ; y = ty(y)
+  elif len(positional) == 1 and DIM_PATTERN.match(positional[0]):
+    dim = DIM_PATTERN.match(positional[0])
+    w, h = dim.group('w'), dim.group('h')
+    w = tx(w) ; h = ty(h)
+  else:
+    return dedent('''
+      Invalid positional arguments. Usage:
+
+        Move a window to x=10%, y=30%:
+          move-and-resize 10 30
+          move-and-resize 10,30
+
+        Resize a window to w=50%, h=100%
+          move-and-resize 50x100
+
+        Move and resize a window to x=10%, y=30%, w=50%, h=20%
+          move-and-resize 10 30 50 20
+          move-and-resize 10,30 50x20
+          move-and-resize '10,30 50x20'
+    ''').strip()
+  if float(w) < 0 and float(h) < 0:
+    active_window.move(x, y)
+    return
+  active_window.move_and_resize(x, y, w, h)
+
+
 @contextmanager
 def open_cache_file(name, mode):
   path = get_cache_file_path(name)
@@ -716,6 +818,8 @@ def get_commands(for_server=False):
     'load-snapshot': load_window_state,
     'print-window-props': print_window_props,
     'key-cord': process_key_cord,
+    'move-and-resize': move_and_resize,
+    'mar': move_and_resize,
   }
   if for_server:
     # Shortcuts live in-memory, so saving/loading only
@@ -736,13 +840,27 @@ def main(positional, flags):
   if not positional:
     help(sorted(commands))
     return
-  i = 0
-  while i < len(positional):
-    pos = positional[i]
-    if pos in commands:
-      commands[pos](positional[i + 1:], flags)
-      return
-    i += 1
+  command_name = positional[0]
+  if command_name not in commands:
+    help(sorted(commands))
+    return
+  if command_name != 'daemon' and get_daemon_pid() is not None:
+    # Prefer issue a GET request to the server.
+    command_tokens = positional + ['--{}={}'.format(k, v) for k, v in flags.items()]
+    try:
+      with urllib.request.urlopen('http://localhost:{port}/{command_string}'.format(
+        port=DAEMON_PORT,
+        command_string='/'.join(command_tokens))) as f:
+        print (f.read().decode('utf-8'))
+        return
+    except Exception as e:
+      sys.stderr.write('Failed to issue command to daemon, falling back on direct execution.\n')
+      sys.stderr.write(str(e))
+      sys.stderr.write('\n')
+      sys.stderr.flush()
+  output = commands[command_name](positional[1:], flags)
+  if output is not None:
+    print(output)
 
 
 def parse_args(sargs):
@@ -753,9 +871,9 @@ def parse_args(sargs):
       a = a.lstrip('-')
       eq = a.find('=')
       if eq > 0:
-        flag[a[:eq]] = a[eq:]
+        flags[a[:eq]] = a[eq + 1:]
       else:
-        flag[a] = True
+        flags[a] = True
     else:
       positional.append(a)
   return positional, flags

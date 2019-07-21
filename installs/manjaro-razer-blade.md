@@ -367,3 +367,11 @@ goom key-chord
 goom key-chord
 ```
 
+Sometimes the windows can't be resized vertically, because kwin has them in a
+state where they're snapped to be the full vertical height. Manually resizing
+them first fixes this, but I just turned off window snapping to avoid this
+problem:
+
+`System Settings > Window Management > Window Behavior`
+If you set the snap zone size of everthing to `0`, it disables snapping.
+

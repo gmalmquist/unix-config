@@ -205,7 +205,7 @@ class MoveAndResize(WindowAction):
     for i in range(N):
       left = 100 * i / N
       right = 100 * (i + 1) / N
-      if right < x or left > x + w:
+      if right <= x or left >= x + w:
         columns.append('⠀')
         continue
       columns.append(self._box_art(y, h))

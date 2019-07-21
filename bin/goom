@@ -87,7 +87,25 @@ KEY_NORMALIZE = {
 }
 
 
+class CliCommand(object):
+  def __init__(self, name, description, delegate):
+    self.name = name
+    self.delegate = delegate
+    self.description = description
+
+  def __repr__(self):
+    return '{}:  {}'.format(self.name, self.description)
+
+  def __call__(self, *args, **kwargs):
+    return self.delegate(*args, **kwargs)
+
+
 class WindowAction(object):
+  """An action that can be triggered by a keyboard shortcut.
+
+  These actions typically operate on the active window, but
+  they don't have to.
+  """
   def __init__(self):
     pass
 
@@ -114,7 +132,10 @@ class WindowAction(object):
 
 
 class MoveAndResize(WindowAction):
+  """Window action that moves and resizes the active window."""
+
   def __init__(self, x, y, w, h, grid_spec=None):
+    """Takes in the coordinates of the info, and optional grid dimensions as a string."""
     self.x = x
     self.y = y
     self.w = w
@@ -194,6 +215,11 @@ class MoveAndResize(WindowAction):
 
 
 class LoadSnapshot(WindowAction):
+  """Window action that restores a snapshot.
+
+  Doesn't care what the active window is.
+  """
+
   def __init__(self, name):
     self.name = name
 
@@ -208,6 +234,9 @@ class LoadSnapshot(WindowAction):
 
 
 class KeyCords(object):
+  """Stores keyboard shortcuts in class variables."""
+
+  # Defaults if ~/.cache/goom/settings/shortcuts.json does not exist.
   _BUILTIN = {
     (frozenset(['c']),): MoveAndResize(1, 0, 4, 1, '6x1'),
     (frozenset(['Left']),): MoveAndResize(0, 0, 50, 100),
@@ -281,6 +310,13 @@ class KeyCords(object):
 
 
 class CommandServer(BaseHTTPRequestHandler):
+  """Spins up a REST server that listens for commands, and executes them.
+
+  The benefit for running the command daemon in the background is that you
+  can see logs for events triggered by keyboard shortcuts, rather than just
+  commands executed directly on the terminal.
+  """
+
   @classmethod
   def start_server(cls):
     old_pid = get_daemon_pid()
@@ -333,67 +369,98 @@ class CommandServer(BaseHTTPRequestHandler):
 
 
 class Screen(object):
+  """Interrogates properties about a display.
+
+  This is a literal screen, as in a monitor.
+  """
   _SIZES = {}
 
   def __init__(self, id):
+    """Takes in the numeric id of the screen (from xprops or xdotool)."""
     self.id = id
 
   @property
   def size(self):
+    """Returns the (width,height) of the screen in pixels."""
     if self.id not in Screen._SIZES:
       Screen._SIZES[self.id] = get_screen_size(self.id)
     return Screen._SIZES[self.id]
 
   def percent_to_pixel(self, percent_x, percent_y):
+    """Converts coordinates given in percentages to pixel coordinates on this screen."""
     w, h = self.size
     return int(w * float(percent_x) / 100), int(h * float(percent_y) / 100)
 
   def pixel_to_percent(self, pixel_x, pixel_y):
+    """Converts coordinates given in pixel coordinates on this screen to percentages."""
     w, h = self.size
     return 100 * float(pixel_x) / w, 100 * float(pixel_y) / h
 
 
 class Window(object):
+  """Interrogates and controls an X window.
+
+  Shells out to xprops and xdotool to determine window properties, and xdotool to
+  move and resize the window.
+  """
   def __init__(self, id):
     self.id = id
     self._geometry = None
     self._props = None
 
   def clear_cache(self):
+    """Window properties are cached to avoid shelling out to xprops/xdotool more than necessary.
+
+    This method clears that cache, so you can read the updated properties in the event that
+    the window is changed.
+    """
     self._geometry = None
     self._props = None
 
   @property
   def geometry(self):
+    """Geometry data, including the id of the screen this window is on, from xdotool."""
     if self._geometry is None:
       self._geometry = get_geometry(self.id)
     return self._geometry
 
   @property
   def props(self):
+    """Dictionary of properties parsed from xprops output."""
     if self._props is None:
       self._props = get_window_props(self.id)
     return self._props
 
   @property
   def desktop(self):
+    """The id of the desktop this window is on."""
     return self.props.get('_NET_WM_DESKTOP')
 
   @property
   def allowed_actions(self):
+    """The allowed actions that can be performed on this window, according to xprops."""
     return self.props.get('_NET_WM_ALLOWED_ACTIONS', '').split(', ')
 
   @property
   def role(self):
+    """The 'role' of this window, according to xprops.
+
+    E.g., this might be ['browser'].
+    """
     roles = self.props.get('WM_WINDOW_ROLE', [])
     return roles[0] if roles else ''
 
   @property
   def classes(self):
+    """The 'classes' of this window, according to xpros.
+
+    E.g., this might be ['Mozilla', 'Firefox']
+    """
     return self.props.get('WM_CLASS', [])
 
   @property
   def name(self):
+    """This is what appears in the title bar of the window."""
     for name in self.props.get('_NET_WM_NAME', []):
       return name
     for name in self.props.get('WM_NAME', []):
@@ -410,6 +477,7 @@ class Window(object):
 
   @property
   def screen(self):
+    """The Screen object for the screen this window is currently displayed on."""
     return Screen(self.geometry.screen)
 
   def move(self, percent_x, percent_y):
@@ -492,6 +560,8 @@ class Window(object):
 
 
 class Geometry(object):
+  """Stores geometry data about a window, parsed from xprops."""
+
   def __init__(self, id, x=None, y=None, width=None, height=None, screen=None):
     self.id = id
     self.x = x
@@ -527,6 +597,8 @@ class Geometry(object):
 
 
 class KeyCordApp(tkinter.Frame):
+  """Responsible for rendering the window that captures key events for chorded hotkeys."""
+
   def __init__(self, master=None):
     super().__init__(master)
     self.master = master
@@ -610,18 +682,21 @@ class KeyCordApp(tkinter.Frame):
     self.quit.pack(side='bottom', padx=20, pady=20)
 
 
-def help(commands):
+# === The below functions implement the CLI commands ===
+
+def help():
   print(dedent('''
     Usage:
       goom <command> <args> <--flags>
   ''').strip())
   print()
   print('  Commands:')
-  for command in commands:
+  for command in get_commands().values():
     print('    {}'.format(command))
 
 
 def save_window_state(positional, flags):
+  """Saves a snapshot of the current desktop."""
   snapshot_name = positional[0] if positional else None
   if not snapshot_name:
     raise ValueError('Snapshot name is required.')
@@ -643,6 +718,7 @@ def save_window_state(positional, flags):
 
 
 def load_window_state(positional, flags):
+  """Load a snapshot into the current desktop."""
   snapshot_name = positional[0] if positional else None
   if not snapshot_name:
     raise ValueError('Snapshot name is required.')
@@ -683,30 +759,6 @@ def process_key_cord(positional, flags):
   key_cord_app = KeyCordApp(master=tk)
   key_cord_app.mainloop()
 
-
-def parse_grid_spec(grid_spec=None):
-  tx = lambda x: x
-  ty = lambda y: y
-  if grid_spec is None:
-    return tx, ty
-  # We interpret "0,0" as "rows,cols", and "0x0" as "width x height"
-  m = POS_PATTERN.match(grid_spec)
-  rows, cols = None, None
-  if m:
-    rows, cols = map(int, (m.group('x'), m.group('y')))
-  m = DIM_PATTERN.match(grid_spec)
-  if m:
-    cols, rows = map(int, (m.group('w'), m.group('h')))
-  if rows is None or cols is None:
-    return dedent('''
-      Expected --grid (-g) to be in one of the formats, but was {}:
-        rows , cols
-        width x height
-    ''').format(grid_spec)
-  tx = lambda x: 100 * float(x) / int(cols)
-  ty = lambda y: 100 * float(y) / int(rows)
-  return tx, ty
- 
 
 def move_and_resize(positional, flags):
   tx = lambda x: x
@@ -792,6 +844,32 @@ def print_shortcuts(positional, flags):
   KeyCords.save()
   with open_cache_file('settings/shortcuts.json', 'r') as f:
     return f.read()
+ 
+# ==== End CLI command functions ====
+
+
+def parse_grid_spec(grid_spec=None):
+  tx = lambda x: x
+  ty = lambda y: y
+  if grid_spec is None:
+    return tx, ty
+  # We interpret "0,0" as "rows,cols", and "0x0" as "width x height"
+  m = POS_PATTERN.match(grid_spec)
+  rows, cols = None, None
+  if m:
+    rows, cols = map(int, (m.group('x'), m.group('y')))
+  m = DIM_PATTERN.match(grid_spec)
+  if m:
+    cols, rows = map(int, (m.group('w'), m.group('h')))
+  if rows is None or cols is None:
+    return dedent('''
+      Expected --grid (-g) to be in one of the formats, but was {}:
+        rows , cols
+        width x height
+    ''').format(grid_spec)
+  tx = lambda x: 100 * float(x) / int(cols)
+  ty = lambda y: 100 * float(y) / int(rows)
+  return tx, ty
  
 
 @contextmanager
@@ -914,35 +992,38 @@ def xdotool(*cmd):
 
 
 def get_commands(for_server=False):
-  commands = {
-    'save-snapshot': save_window_state,
-    'load-snapshot': load_window_state,
-    'print-window-props': print_window_props,
-    'key-cord': process_key_cord,
-    'move-and-resize': move_and_resize,
-    'mar': move_and_resize,
-    'save-shortcuts': lambda _,__: KeyCords.save(),
-    'load-shortcuts': lambda _,__: KeyCords.load(),
-    'backup-shortcuts': backup_shortcuts,
-    'restore-shortcuts': restore_shortcuts,
-    'reset-shortcuts': reset_shortcuts,
-    'print-shortcuts': print_shortcuts,
-  }
+  commands = [
+    CliCommand('save-snapshot', 'Saves the state of windows on the active desktop.',
+      save_window_state),
+    CliCommand('load-snapshot', 'Loads the state of windows on the active desktop.',
+      load_window_state),
+    CliCommand('print-window-props', 'Dumps parsed information from xprop', print_window_props),
+    CliCommand('key-chord', 'Opens the window allowing chorded keyboard shortcuts.', process_key_cord),
+    CliCommand('move-and-resize', 'Move and resize a window.', move_and_resize),
+    CliCommand('mar', 'Alias for move-and-resize.', move_and_resize),
+    CliCommand('save-shortcuts', 'Save shortcuts to disk.', lambda _,__: KeyCords.save()),
+    CliCommand('load-shortcuts', 'Load shortcuts from disk.', lambda _,__: KeyCords.load()),
+    CliCommand('backup-shortcuts','Make a backup of the shortcuts file.', backup_shortcuts),
+    CliCommand('restore-shortcuts', 'Restore the shortcuts file from backup.', restore_shortcuts),
+    CliCommand('reset-shortcuts', 'Reset shortcuts to default.', reset_shortcuts),
+    CliCommand('print-shortcuts', 'Print contents of current shortcuts.', print_shortcuts),
+  ]
   if not for_server:
-    commands.update({
-      'daemon': lambda pos, flags: CommandServer.start_server(),
-    })
-  return commands
+    commands.extend([
+      CliCommand('daemon', 'Starts the command server daemon.',
+        lambda pos, flags: CommandServer.start_server()),
+    ])
+  return { c.name: c for c in commands }
 
 
 def main(positional, flags):
   commands = get_commands()
   if not positional:
-    help(sorted(commands))
+    help()
     return
   command_name = positional[0]
   if command_name not in commands:
-    help(sorted(commands))
+    help()
     return
   if command_name != 'daemon' and get_daemon_pid() is not None:
     # Prefer issue a GET request to the server.
@@ -954,6 +1035,9 @@ def main(positional, flags):
         print (f.read().decode('utf-8'))
         return
     except Exception as e:
+      # This can happen if the daemon was killed too fast to clean up its own PID file,
+      # e.g. if the computer is shutdown or the user is logged-out without cleanly
+      # killing the process.
       sys.stderr.write('Daemon is not running, falling back on direct execution.\n')
       sys.stderr.flush()
   KeyCords.load()
@@ -963,6 +1047,19 @@ def main(positional, flags):
 
 
 def parse_args(sargs):
+  """Yeh, I know, I'm not using argparse. I don't like its argument syntax.
+
+  This very simple parser treats any token which does not start with a '-' as
+  a positional argument, and any token which does start with a '-' as a flag.
+
+  Flags have their leading '-' characters stripped, and are stuck in a map. If
+  the flag contains an '=', the string before the equal sign is taken as the
+  key, and the characters after as the value. Otherwise, the whole flag is used
+  as the key, and the value is set to True.
+
+  :returns: A tuple (positional, flags), where positional is a list and flags is
+    a dict.
+  """
   positional = []
   flags = {}
   for a in sargs:

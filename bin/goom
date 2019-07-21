@@ -192,6 +192,10 @@ class MoveAndResize(WindowAction):
     columns = []
     N = 8
     x, y, w, h = map(float, [self.x, self.y, self.w, self.h])
+    if self.grid_spec:
+      tx, ty = parse_grid_spec(self.grid_spec)
+      x, w = map(tx, (x, w))
+      y, h = map(ty, (y, h))
     for i in range(N):
       left = 100 * i / N
       right = 100 * (i + 1) / N

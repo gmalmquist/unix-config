@@ -42,6 +42,20 @@ class WindowAction(object):
     """Render this window action as text, possibly with ascii art."""
     raise ValueError('Must be implemented by subclass.')
 
+  def serialize(self):
+    """Serialize this to a settings file.
+
+    Should return a list where the first element is the name of
+    the class, and subsequent elements are constructor arguments.
+    """
+    raise ValueError('Must be implemented by subclass.')
+
+  @classmethod
+  def load(cls, serialized):
+    subclass = eval(serialized[0])
+    return subclass(*serialized[1:])
+
+
 class MoveAndResize(WindowAction):
   def __init__(self, x, y, w, h):
     self.x = x
@@ -114,6 +128,9 @@ class MoveAndResize(WindowAction):
       columns = shortened
     return '┃{}┃ (move and resize)'.format(''.join(columns))
 
+  def serialize(self):
+    return ['MoveAndResize', self.x, self.y, self.w, self.h]
+
 
 class LoadSnapshot(WindowAction):
   def __init__(self, name):
@@ -124,6 +141,9 @@ class LoadSnapshot(WindowAction):
 
   def render_text(self):
     return 'Load Snapshot "{}"'.format(self.name)
+
+  def serialize(self):
+    return ['LoadSnapshot', self.name]
 
 
 class KeyCords(object):
@@ -146,32 +166,69 @@ class KeyCords(object):
     (frozenset(['t']),): LoadSnapshot('foobar'),
   }
 
-  def __init__(self):
-    pass
+  _SHORTCUTS = dict(_BUILTIN)
+
+  @classmethod
+  def load(cls):
+    if not os.path.exists(get_cache_file_path('settings/shortcuts.json')):
+      return
+    with open_cache_file('settings/shortcuts.json', 'r') as f:
+      try:
+        data = json.loads(f.read())
+      except Exception as e:
+        sys.stderr.write(str(e))
+        sys.stderr.flush()
+        return
+    cls._SHORTCUTS = {}
+    for shortcut in data.get('shortcuts', []):
+      cords = tuple(frozenset(cord.split('+')) for cord in shortcut.get('cords', '').split(' '))
+      command = WindowAction.load(shortcut.get('action'))
+      cls._SHORTCUTS[cords] = command
+
+  @classmethod
+  def save(cls):
+    result = {}
+    result['shortcuts'] = []
+    for sequence in cls.get_sequences():
+      result['shortcuts'].append({
+        'cords': ' '.join('+'.join(c) for c in sequence),
+        'action': cls.get_command(sequence).serialize()
+      })
+    with open_cache_file('settings/shortcuts.json', 'w') as f:
+      f.write(json.dumps(result, indent=2, sort_keys=True))
 
   @classmethod
   def get_sequences(cls):
-    return sorted(cls._BUILTIN, key=lambda cord: (len(cord),) + tuple(map(len, cord)))
+    return sorted(cls._SHORTCUTS, key=lambda cord: (len(cord),) + tuple(map(len, cord)))
 
   @classmethod
   def get_command(cls, cords):
-    key = tuple(map(frozenset, cords))
+    key = tuple(map(frozenset, ((s.upper() for s in cs) for cs in cords)))
     # Find longest trailing match.
     for sequence in reversed(cls.get_sequences()):
-      if len(key) >= len(sequence) and tuple(key[-len(sequence):]) == sequence:
-        return cls._BUILTIN[sequence]
-    return cls._BUILTIN.get(key)
+      seq = tuple(map(frozenset, ((s.upper() for s in cs) for cs in sequence)))
+      if len(key) >= len(seq) and tuple(key[-len(seq):]) == seq:
+        return cls._SHORTCUTS[sequence]
+    return cls._SHORTCUTS.get(key)
 
 
 class CommandServer(BaseHTTPRequestHandler):
   @classmethod
   def start_server(cls):
-    print('Starting server ...')
-    server = HTTPServer(('localhost', 8993), cls)
+    old_pid = get_daemon_pid()
+    if old_pid is not None:
+      check_output(['kill', '-9', old_pid])
+    with open_cache_file('daemon.pid', 'w') as f:
+      f.write(str(os.getpid()))
     try:
+      KeyCords.load()
+      print('Starting server ...')
+      server = HTTPServer(('localhost', 8993), cls)
       server.serve_forever()
     except KeyboardInterrupt:
       print('Keyboard interrupt, shutting down.')
+    finally:
+      os.remove(get_cache_file_path('daemon.pid'))
 
   def do_POST(self):
     self.do_GET()
@@ -536,11 +593,15 @@ def process_key_cord(positional, flags):
 
 @contextmanager
 def open_cache_file(name, mode):
-  path = os.path.expanduser(os.path.join('~/.cache/goom', name))
+  path = get_cache_file_path(name)
   if not os.path.exists(os.path.dirname(path)):
     os.makedirs(os.path.dirname(path))
   with open(path, mode) as f:
     yield f
+
+
+def get_cache_file_path(name):
+  return os.path.expanduser(os.path.join('~/.cache/goom', name))
 
 
 def get_screen_size(id):
@@ -629,6 +690,14 @@ def get_all_window_ids():
   raise ValueError('Failed to find window ids.') 
 
 
+def get_daemon_pid():
+  path = get_cache_file_path('daemon.pid')
+  if not os.path.exists(path):
+    return None
+  with open(path, 'r') as f:
+    return f.read().strip()
+
+
 def xprop(*cmd):
   command = ['xprop']
   command.extend(map(str, cmd))
@@ -643,12 +712,19 @@ def xdotool(*cmd):
 
 def get_commands(for_server=False):
   commands = {
-    'save-window-state': save_window_state,
-    'load-window-state': load_window_state,
+    'save-snapshot': save_window_state,
+    'load-snapshot': load_window_state,
     'print-window-props': print_window_props,
     'key-cord': process_key_cord,
   }
-  if not for_server:
+  if for_server:
+    # Shortcuts live in-memory, so saving/loading only
+    # makes sense in that context.
+    commands.update({
+      'save-shortcuts': lambda _,__: KeyCords.save(),
+      'load-shortcuts': lambda _,__: KeyCords.load(),
+    })
+  else:
     commands.update({
       'daemon': lambda pos, flags: CommandServer.start_server(),
     })

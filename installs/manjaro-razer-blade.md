@@ -347,3 +347,23 @@ sudo pacman -S tk
 ```
 
 This initially failed, but succeeded when I tried again after doing a system upgrade which I'd been putting off. I noticed that the wiki for pacman said to do upgrades before installing new stuff, so I guess that's why. Interesting.
+
+Wrote up a python script called `goom` to manage X windows programatically, and
+added it to the path:
+`/etc/profile`
+```
+export PATH=${PATH}:/home/gmalmquist/Code/unix-config/bin
+```
+
+Changed all the shortcuts in `window management` to `goom` ones, and also added:
+
+`Super+Shift+M`
+```
+goom key-cord
+```
+
+`Alt+Shift+M`
+```
+goom key-cord
+```
+

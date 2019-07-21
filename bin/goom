@@ -344,21 +344,26 @@ class KeyChords(object):
 
   @classmethod
   def save(cls):
-    result = {}
-    result['shortcuts'] = []
+    with open_cache_file('settings/shortcuts.json', 'w') as f:
+      f.write(cls.get_shortcuts_json())
+
+  @classmethod
+  def get_shortcuts_json(cls):
+    shortcuts = []
     for sequence in cls.get_sequences():
-      result['shortcuts'].append({
+      shortcuts.append({
         'chords': KeyChords.format_chords(sequence),
         'action': cls.get_command(sequence).serialize()
       })
-    with open_cache_file('settings/shortcuts.json', 'w') as f:
-      f.write('{\n  "shortcuts": [')
-      for i, shortcut in enumerate(result['shortcuts']):
-        if i > 0:
-          f.write(',')
-        f.write('\n    ')
-        f.write(json.dumps(shortcut, sort_keys=True))
-      f.write('\n  ]\n}')
+    text_buffer = []
+    text_buffer.append('{\n  "shortcuts": [')
+    for i, shortcut in enumerate(shortcuts):
+      if i > 0:
+        text_buffer.append(',')
+      text_buffer.append('\n    ')
+      text_buffer.append(json.dumps(shortcut, sort_keys=True))
+    text_buffer.append('\n  ]\n}')
+    return ''.join(text_buffer)
 
   @classmethod
   def get_sequences(cls):
@@ -922,9 +927,7 @@ def reset_shortcuts(positional, flags):
 
 
 def print_shortcuts(positional, flags):
-  KeyChords.save()
-  with open_cache_file('settings/shortcuts.json', 'r') as f:
-    return f.read()
+  return KeyChords.get_shortcuts_json()
 
 
 def add_shortcut(positional, flags):

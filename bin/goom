@@ -15,15 +15,19 @@ from subprocess import Popen, PIPE, check_output
 from textwrap import dedent
 
 
+# Inset for positioning windows. This accounts for window decorations the window manager adds that
+# exceed the nominal window boundaries.
+INSET = (4, 16) # x, y
+
+# Don't allow sequences of hotkey cords longer than this.
+MAX_CORD_SEQUENCE = 4
+
+# Regexes for parsing output from various unix utilities.
 WINDOW_PATTERN = re.compile(r'Window\s+(?P<id>\d+)')
 POSITION_PATTERN = re.compile(r'Position:\s+(?P<x>\d+),(?P<y>\d+)\s+[(]screen:\s+(?P<screen>\d+)[)]')
 GEOMETRY_PATTERN = re.compile(r'Geometry:\s+(?P<width>\d+)x(?P<height>\d+)')
 PROP_ONELINE = re.compile(r'(?P<name>[a-zA-Z0-9_]+)[(](?P<type>[a-zA-Z0-9_]+)[)]\s+=\s*(?P<value>.*)')
 PROP_MULTILINE = re.compile(r'(?P<name>[a-zA-Z0-9_]+)[(](?P<type>[a-zA-Z0-9_]+)[)]:\s*(?P<value>.*)')
-
-# Inset for positioning windows. This accounts for window decorations the window manager adds that
-# exceed the nominal window boundaries.
-INSET = (4, 2) # x, y
 
 
 class WindowAction(object):
@@ -108,7 +112,7 @@ class MoveAndResize(WindowAction):
         pair = '{}{}'.format(columns[i], columns[i + 1]).replace('⠀', ' ')
         shortened.append(collapse.get(pair, columns[i]))
       columns = shortened
-    return '┃{}┃ ({}%,{}%, {}%x{}%)'.format(''.join(columns), *map(round, (self.x, self.y, self.w, self.h)))
+    return '┃{}┃ (move and resize)'.format(''.join(columns))
 
 
 class LoadSnapshot(WindowAction):
@@ -119,7 +123,7 @@ class LoadSnapshot(WindowAction):
     load_window_state([self.name], {})
 
   def render_text(self):
-    return 'Load Snapshot {}'.format(self.name)
+    return 'Load Snapshot "{}"'.format(self.name)
 
 
 class KeyCords(object):
@@ -386,7 +390,7 @@ class KeyCordApp(tkinter.Frame):
     screen_height = master.winfo_screenheight()
     w, h = master.winfo_reqwidth(), master.winfo_reqheight()
     master.geometry('+{}+{}'.format(
-      int(screen_width/2 - w/2), int(screen_height/2 - h/2)
+      int(screen_width/2 - w/2), int(screen_height/2 - h)
     ))
     self.bind('<KeyPress>', self.handle_keypress)
     self.bind('<KeyRelease>', self.handle_keyrelease)
@@ -425,6 +429,8 @@ class KeyCordApp(tkinter.Frame):
       # It would appear that this is the end
       # of a cord.
       self.cords.append(set(self.current_cord))
+      if len(self.cords) > MAX_CORD_SEQUENCE:
+        self.cords = self.cords[1:]
       self.current_cord = set()
       self.process_cords()
 
@@ -435,9 +441,10 @@ class KeyCordApp(tkinter.Frame):
       command.execute(Window(self.active_window))
     else:
       print('No commands for cord:',
-        ' '.join(','.join(c) for c in self.cords))
+        ' '.join('+'.join(c) for c in self.cords))
 
   def create_widgets(self):
+    self.winfo_toplevel().title('goom - totally not moom')
     labels = []
     for sequence in KeyCords.get_sequences():
       command = KeyCords.get_command(sequence)

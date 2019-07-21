@@ -305,7 +305,7 @@ xdotool getactivewindow windowmove 33% 0 windowsize 33% 100%
 
 `ctrl+3`
 ```
-xdotool getactivewindow windowmove 66% 0 windowsize 33% 100%
+xdotool getactivewindow windowmove 67% 0 windowsize 33% 100%
 ```
 
 ### Bind CTRL 4, 5 to first and last vertical sixths
@@ -340,3 +340,12 @@ xdotool getactivewindow windowmove 50% 0 windowsize 25% 100%
 xdotool getactivewindow windowmove 75% 0 windowsize 25% 100%
 ```
 
+## Install tk
+So I can do python tkinter things.
+```
+sudo pacman -S tk
+```
+
+This is initially failed, but succeeded when I tried again after doing a system upgrade which I'd been putting off. I noticed that the wiki for pacman said to do upgrades before installing new stuff, so I guess that's why. Interesting.
+
+Running `python -m tkinter` now works!

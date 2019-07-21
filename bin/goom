@@ -1,14 +1,16 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 from __future__ import print_function, with_statement
 
 import json
 import os
 import re
 import sys
+import tkinter
 
 from collections import namedtuple
 from contextlib import contextmanager
 from hashlib import sha1
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from subprocess import Popen, PIPE, check_output
 from textwrap import dedent
 
@@ -18,6 +20,93 @@ POSITION_PATTERN = re.compile(r'Position:\s+(?P<x>\d+),(?P<y>\d+)\s+[(]screen:\s
 GEOMETRY_PATTERN = re.compile(r'Geometry:\s+(?P<width>\d+)x(?P<height>\d+)')
 PROP_ONELINE = re.compile(r'(?P<name>[a-zA-Z0-9_]+)[(](?P<type>[a-zA-Z0-9_]+)[)]\s+=\s*(?P<value>.*)')
 PROP_MULTILINE = re.compile(r'(?P<name>[a-zA-Z0-9_]+)[(](?P<type>[a-zA-Z0-9_]+)[)]:\s*(?P<value>.*)')
+
+
+class KeyCords(object):
+  _BUILTIN = {
+    (frozenset(['c']),): [
+      'windowsize', 'ACTIVE', '67%', '100%',
+      'windowmove', 'ACTIVE', '17%', '0',
+    ],
+    (frozenset(['Left']),): [
+      'windowsize', 'ACTIVE', '50%', '100%',
+      'windowmove', 'ACTIVE', '0', '0',
+    ],
+    (frozenset(['Right']),): [
+      'windowsize', 'ACTIVE', '50%', '100%',
+      'windowmove', 'ACTIVE', '50%', '0',
+    ],
+  }
+
+  def __init__(self):
+    pass
+
+  @classmethod
+  def get_command(cls, cords):
+    key = tuple(map(frozenset, cords))
+    # Find longest trailing match.
+    known_sequences = sorted(cls._BUILTIN, key=lambda cord : -len(cord))
+    for sequence in known_sequences:
+      if len(key) >= len(sequence) and tuple(key[-len(sequence):]) == sequence:
+        return cls._BUILTIN[sequence]
+    return cls._BUILTIN.get(key)
+
+
+class CommandServer(BaseHTTPRequestHandler):
+  @classmethod
+  def start_server(cls):
+    print('Starting server ...')
+    server = HTTPServer(('localhost', 8993), cls)
+    try:
+      server.serve_forever()
+    except KeyboardInterrupt:
+      print('Keyboard interrupt, shutting down.')
+
+  def do_POST(self):
+    self.do_GET()
+
+  def do_GET(self):
+    print('Received GET', self.path)
+    commands = get_commands(for_server=True)
+    command_name = self.path[1:].replace('/', ' ')
+    command_args = []
+    space = command_name.find(' ')
+    if space >= 0:
+      command_args = command_name[space + 1:].split(' ')
+      command_name = command_name[:space]
+    if command_name not in commands:
+      self.send_response(400)
+      self.send_header('content-type', 'text/plain')
+      self.end_headers()
+      self.wfile.write('No such command {}'.format(command_name).encode())
+      return
+    self.send_response(200)
+    self.send_header('content-type', 'text/plain')
+    self.end_headers()
+    self.wfile.write('Ok, executing {}'.format(command_name).encode())
+    positional, flags = parse_args(command_args)
+    commands[command_name](positional, flags)
+
+
+class Screen(object):
+  _SIZES = {}
+
+  def __init__(self, id):
+    self.id = id
+
+  @property
+  def size(self):
+    if self.id not in Screen._SIZES:
+      Screen._SIZES[self.id] = get_screen_size(self.id)
+    return Screen._SIZES[self.id]
+
+  def percent_to_pixel(self, percent_x, percent_y):
+    w, h = self.size
+    return int(w * float(percent_x) / 100), int(h * float(percent_y) / 100)
+
+  def pixel_to_percent(self, pixel_x, pixel_y):
+    w, h = self.size
+    return 100 * float(pixel_x) / w, 100 * float(pixel_y) / h
 
 
 class Window(object):
@@ -94,14 +183,86 @@ class Geometry(object):
     ''').strip().format(**self.as_dict())
 
   def as_dict(self):
+    screen = Screen(self.screen)
+    x, y = screen.pixel_to_percent(self.x, self.y)
+    w, h = screen.pixel_to_percent(self.width, self.height)
     return {
       'id': self.id,
-      'x': self.x,
-      'y': self.y,
-      'width': self.width,
-      'height': self.height,
+      'x': x,
+      'y': y,
+      'width': w,
+      'height': h,
       'screen': self.screen,
     }
+
+
+class KeyCordApp(tkinter.Frame):
+  def __init__(self, master=None):
+    super().__init__(master)
+    self.master = master
+    self.active_window = xdotool('getactivewindow')
+    self.pack()
+    self.create_widgets()
+    screen_width = master.winfo_screenwidth()
+    screen_height = master.winfo_screenheight()
+    w, h = int(screen_width/8), int(screen_height/8)
+    master.geometry('{}x{}+{}+{}'.format(
+      w, h, int(screen_width/2 - w/2), int(screen_height/2 - h/2)
+    ))
+    self.bind('<KeyPress>', self.handle_keypress)
+    self.bind('<KeyRelease>', self.handle_keyrelease)
+    self.bind('<FocusOut>', lambda _: self.master.destroy())
+    self.focus_set()
+    self.cords = []
+    self.current_cord = set()
+    self.current_pressed = set()
+    self.done = False
+
+  def handle_keypress(self, event):
+    if self.done:
+      return
+    if event.keysym == 'Escape':
+      self.done = True
+      self.master.destroy()
+      return
+    if event.keysym == 'Enter' or event.keysym == 'Return':
+      self.cords.append(frozenset(self.current_cord))
+      self.current_cord = set()
+      self.done = True
+      self.process_cords()
+      self.master.destroy()
+      return
+    self.current_pressed.add(event.keysym)
+    self.current_cord.add(event.keysym)
+
+  def handle_keyrelease(self, event):
+    if self.done or event.keysym == 'Escape':
+      return
+    if event.keysym in self.current_pressed:
+      self.current_pressed.remove(event.keysym)
+    else:
+      return
+    if not self.current_pressed:
+      # It would appear that this is the end
+      # of a cord.
+      self.cords.append(set(self.current_cord))
+      self.current_cord = set()
+      self.process_cords()
+
+  def process_cords(self):
+    cords = tuple(frozenset(c) for c in self.cords if len(c) > 0)
+    command = KeyCords.get_command(cords)
+    if command is not None:
+      xdotool(*((self.active_window if arg == 'ACTIVE' else arg) for arg in command))
+    else:
+      print('No commands for cord:',
+        ' '.join(','.join(c) for c in self.cords))
+
+  def create_widgets(self):
+    self.quit = tkinter.Button(self,
+      text='QUIT',
+      command=self.master.destroy)
+    self.quit.pack(side='bottom')
 
 
 def help(commands):
@@ -136,9 +297,44 @@ def save_window_state(positional, flags):
     }, indent=2, sort_keys=True))
 
 
+def load_window_state(positional, flags):
+  snapshot_name = positional[0] if positional else None
+  if not snapshot_name:
+    raise ValueError('Snapshot name is required.')
+  hasher = sha1()
+  hasher.update(snapshot_name.encode('utf8'))
+  sid = hasher.hexdigest()
+  windows = get_desktop_windows()
+  with open_cache_file('snapshot/{}.json'.format(sid), 'r') as f:
+    snapshot = json.loads(f.read())
+  pairs = []
+  used = set()
+  for snap_window in snapshot['windows']:
+    for window in windows:
+      if window.id in used:
+        continue
+      if tuple(snap_window['classes']) == tuple(window.classes):
+        pairs.append((snap_window, window))
+        used.add(window.id)
+      break
+  for snap_window, window in pairs:
+    x_percent, y_percent = snap_window['geometry']['x'], snap_window['geometry']['y']
+    w_percent, h_percent = snap_window['geometry']['width'], snap_window['geometry']['height']
+    screen = Screen(window.geometry.screen)
+    x, y = screen.percent_to_pixel(x_percent, y_percent)
+    w, h = screen.percent_to_pixel(w_percent, h_percent)
+    xdotool('windowmove', window.id, x, y, 'windowsize', window.id, w, h)
+
+
 def print_window_props(positional, flags):
   for id in positional:
     print(json.dumps(get_window_props(id), indent=2, sort_keys=True))
+
+
+def process_key_cord(positional, flags):
+  tk = tkinter.Tk()
+  key_cord_app = KeyCordApp(master=tk)
+  key_cord_app.mainloop()
 
 
 @contextmanager
@@ -148,6 +344,14 @@ def open_cache_file(name, mode):
     os.makedirs(os.path.dirname(path))
   with open(path, mode) as f:
     yield f
+
+
+def get_screen_size(id):
+  output = check_output(['xrandr', '--screen', str(id)]).decode('utf-8')
+  match = re.compile(r'\s+current\s+(?P<width>\d+)\s*x\s*(?P<height>\d+)\s*,').search(output)
+  if not match:
+    raise ValueError('Could not determine screen size from xrandr.')
+  return int(match.group('width')), int(match.group('height'))
 
 
 def get_geometry(wid):
@@ -240,11 +444,22 @@ def xdotool(*cmd):
   return check_output(command).decode('utf-8').strip()
 
 
-def main(positional, flags):
+def get_commands(for_server=False):
   commands = {
     'save-window-state': save_window_state,
+    'load-window-state': load_window_state,
     'print-window-props': print_window_props,
+    'key-cord': process_key_cord,
   }
+  if not for_server:
+    commands.update({
+      'daemon': lambda pos, flags: CommandServer.start_server(),
+    })
+  return commands
+
+
+def main(positional, flags):
+  commands = get_commands()
   if not positional:
     help(sorted(commands))
     return
@@ -256,10 +471,11 @@ def main(positional, flags):
       return
     i += 1
 
-if __name__ == '__main__':
+
+def parse_args(sargs):
   positional = []
   flags = {}
-  for a in sys.argv[1:]:
+  for a in sargs:
     if a.startswith('-'):
       a = a.lstrip('-')
       eq = a.find('=')
@@ -269,4 +485,8 @@ if __name__ == '__main__':
         flag[a] = True
     else:
       positional.append(a)
-  main(positional, flags)
+  return positional, flags
+
+
+if __name__ == '__main__':
+  main(*parse_args(sys.argv[1:]))

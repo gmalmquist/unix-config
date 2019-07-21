@@ -346,6 +346,4 @@ So I can do python tkinter things.
 sudo pacman -S tk
 ```
 
-This is initially failed, but succeeded when I tried again after doing a system upgrade which I'd been putting off. I noticed that the wiki for pacman said to do upgrades before installing new stuff, so I guess that's why. Interesting.
-
-Running `python -m tkinter` now works!
+This initially failed, but succeeded when I tried again after doing a system upgrade which I'd been putting off. I noticed that the wiki for pacman said to do upgrades before installing new stuff, so I guess that's why. Interesting.

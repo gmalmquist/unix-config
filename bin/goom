@@ -6,6 +6,7 @@ import os
 import re
 import shutil
 import sys
+import time
 import tkinter
 import urllib.request
 
@@ -987,6 +988,30 @@ def remove_shortcut(positional, flags):
   ''').strip().format(
     KeyChords.format_chords(chords), command.render_text())
 
+
+def manage_daemon(positional, flags):
+  if not positional or positional[0] == 'start':
+    CommandServer.start_server()
+    return
+  if positional[0] == 'stop':
+    pid = get_daemon_pid()
+    if pid is None:
+      return 'Daemon is already stopped.'
+    check_output(['kill', '-9', pid])
+    return 'Daemon killed.'
+  if positional[0] == 'status' or positional[0] == 'info':
+    pid = get_daemon_pid()
+    if pid is None:
+      return 'Daemon is not running.'
+    return 'Daemon is running with pid {}'.format(pid)
+  return dedent('''
+    Usage:
+      daemon        start the daemon in-process
+      daemon start  start the daemon in-process
+      daemon stop   stop the daemon
+      daemon info   get the daemon pid
+  ''')
+
 # ==== End CLI command functions ====
 
 
@@ -1118,7 +1143,15 @@ def get_daemon_pid():
   if not os.path.exists(path):
     return None
   with open(path, 'r') as f:
-    return f.read().strip()
+    pid = f.read().strip()
+  try:
+    pinfo = check_output(['ps', '--pid', pid]).decode('utf-8')
+    if 'python' not in pinfo:
+      return None # Pid exists, but isn't for the right process.
+  except:
+    # That process doesn't exist anymore.
+    return None
+  return pid
 
 
 def xprop(*cmd):
@@ -1154,8 +1187,7 @@ def get_commands(for_server=False):
   ]
   if not for_server:
     commands.extend([
-      CliCommand('daemon', 'Starts the command server daemon.',
-        lambda pos, flags: CommandServer.start_server()),
+      CliCommand('daemon', 'Starts the command server daemon.', manage_daemon),
     ])
   return { c.name: c for c in commands }
 
@@ -1169,6 +1201,10 @@ def main(positional, flags):
   if command_name not in commands:
     help()
     return
+  if command_name != 'daemon' and get_daemon_pid() is None:
+    print('Daemon is down, starting it up.')
+    Popen([sys.argv[0], 'daemon'])
+    time.sleep(0.2)
   if command_name != 'daemon' and get_daemon_pid() is not None:
     # Prefer issue a GET request to the server.
     command_tokens = positional + ['--{}={}'.format(k, v) for k, v in flags.items()]
@@ -1182,7 +1218,7 @@ def main(positional, flags):
       # This can happen if the daemon was killed too fast to clean up its own PID file,
       # e.g. if the computer is shutdown or the user is logged-out without cleanly
       # killing the process.
-      sys.stderr.write('Daemon is not running, falling back on direct execution.\n')
+      sys.stderr.write('Daemon is not actually running, falling back on direct execution.\n')
       sys.stderr.flush()
   KeyChords.load()
   output = commands[command_name](positional[1:], flags)

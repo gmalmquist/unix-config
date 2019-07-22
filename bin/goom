@@ -273,13 +273,13 @@ class SwapWindows(WindowAction):
     ageom = active.geometry
     selected.move_and_resize(
       ageom.x - ageom.insets.left,
-      ageom.y - ageom.insets.top,
+      ageom.y,
       ageom.width + ageom.insets.right + ageom.insets.left,
       ageom.height + ageom.insets.bottom + ageom.insets.top,
       exact_pixels=True)
     active.move_and_resize(
       sgeom.x - sgeom.insets.left,
-      sgeom.y - sgeom.insets.top,
+      sgeom.y,
       sgeom.width + sgeom.insets.right + sgeom.insets.left,
       sgeom.height + sgeom.insets.bottom + sgeom.insets.top,
       exact_pixels=True)
@@ -633,7 +633,8 @@ class Window(object):
       print('0 Delta w/h', int(self.geometry.width) - w, int(self.geometry.height) - h)
     new_x, new_y = map(int, [self.geometry.x, self.geometry.y])
     delta_x, delta_y = new_x - x - insets.left, new_y - y
-    if delta_x == 0 and delta_y == 0:
+    # TODO: This is wonky.
+    if delta_x == 0 and (delta_y == 0 or delta_y == insets.top):
       return
 
     target_x, target_y = x, y

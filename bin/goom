@@ -22,9 +22,10 @@ from textwrap import dedent
 # the standard libaries are sufficient. However, it does
 # require the presence of certain external libraries and
 # binaries:
-# * tk      (for GUI bindings)
-# * xprop   (to interrogate X about its windows)
-# * xdotool (to move and resize windows)
+# * tk       (for GUI bindings)
+# * xprop    (to interrogate X about its windows)
+# * xdotool  (to move and resize windows)
+# * xwininfo (more window metadata)
 
 # Inset for positioning windows. This accounts for window decorations the window manager adds that
 # exceed the nominal window boundaries.
@@ -271,9 +272,17 @@ class SwapWindows(WindowAction):
     sgeom = selected.geometry
     ageom = active.geometry
     selected.move_and_resize(
-      ageom.x, ageom.y, ageom.width, ageom.height, exact_pixels=True)
+      ageom.x - ageom.insets.left,
+      ageom.y - ageom.insets.top,
+      ageom.width + ageom.insets.right + ageom.insets.left,
+      ageom.height + ageom.insets.bottom + ageom.insets.top,
+      exact_pixels=True)
     active.move_and_resize(
-      sgeom.x, sgeom.y, sgeom.width, sgeom.height, exact_pixels=True)
+      sgeom.x - sgeom.insets.left,
+      sgeom.y - sgeom.insets.top,
+      sgeom.width + sgeom.insets.right + sgeom.insets.left,
+      sgeom.height + sgeom.insets.bottom + sgeom.insets.top,
+      exact_pixels=True)
 
   def render_text(self):
     return 'Swap Windows'
@@ -583,15 +592,24 @@ class Window(object):
     x, y = screen.percent_to_pixel(percent_x, percent_y)
     w, h = screen.percent_to_pixel(percent_w, percent_h)
 
-    inset_x, inset_y = INSET
-    x += inset_x
-    y += inset_y
-    w -= inset_x * 2
-    h -= inset_y * 2
-
     if exact_pixels:
       # Input parameters were actually literal pixels.
       x, y, w, h = map(float, (percent_x, percent_y, percent_w, percent_h))
+
+    insets = self.geometry.insets
+    #x -= insets.left
+    #y -= insets.top
+    w -= insets.left #+ insets.right
+    h -= insets.bottom + insets.top
+
+    if x <= insets.left:
+      # The math here doesn't really make
+      # sense (I think it should just be -x),
+      # but this seems to work.
+      w -= x + insets.left
+      x = 0
+
+    print('insets', insets)
 
     if float(percent_x) < 0:
       x = int(self.geometry.x)
@@ -607,10 +625,14 @@ class Window(object):
     # Sometimes we don't end up quite where we wanted, because
     # we hit the edge of the screen. Correct the x,y position here:
     self.clear_cache()
-    #print('0 Delta x/y', int(self.geometry.x) - x, int(self.geometry.y) - y)
-    #print('0 Delta w/h', int(self.geometry.width) - w, int(self.geometry.height) - h)
+    if 'Firefox' in self.classes:
+      print(*self.classes)
+      print('tgt:', x, y, w, h)
+      print('new:', self.geometry.x, self.geometry.y, self.geometry.width, self.geometry.height)
+      print('0 Delta x/y', int(self.geometry.x) - x, int(self.geometry.y) - y)
+      print('0 Delta w/h', int(self.geometry.width) - w, int(self.geometry.height) - h)
     new_x, new_y = map(int, [self.geometry.x, self.geometry.y])
-    delta_x, delta_y = new_x - x, new_y - y
+    delta_x, delta_y = new_x - x - insets.left, new_y - y
     if delta_x == 0 and delta_y == 0:
       return
 
@@ -627,11 +649,12 @@ class Window(object):
 
     if delta_y < 0:
       # We tried to go too far down, and got shunted up.
-      target_y += abs(delta_y)
-      target_h -= abs(delta_y)
+      target_y += abs(delta_y) + insets.top
+      target_h -= abs(delta_y) + insets.top
     elif delta_y > 0:
       # We went farther up than the desktop supports.
-      target_h -= abs(delta_y)
+      target_y = 0
+      pass
 
     xdotool('windowsize', self.id, target_w, target_h)
     xdotool('windowmove', self.id, target_x, target_y)
@@ -646,16 +669,21 @@ class Window(object):
     #print()
 
 
+class Insets(namedtuple('Insets', ['left', 'right', 'top', 'bottom'])):
+  pass
+
+
 class Geometry(object):
   """Stores geometry data about a window, parsed from xprops."""
 
-  def __init__(self, id, x=None, y=None, width=None, height=None, screen=None):
+  def __init__(self, id, x=None, y=None, width=None, height=None, screen=None, insets=None):
     self.id = id
     self.x = x
     self.y = y
     self.width = width
     self.height = height
     self.screen = screen
+    self.insets = insets
 
   def __repr__(self):
     return dedent('''
@@ -666,6 +694,7 @@ class Geometry(object):
         y = {y}
         width = {width}
         height = {height}
+        insets = {insets}
       )
     ''').strip().format(**self.as_dict())
 
@@ -680,6 +709,7 @@ class Geometry(object):
       'width': w,
       'height': h,
       'screen': self.screen,
+      'insets': list(self.insets)
     }
 
 
@@ -831,7 +861,10 @@ def load_window_state(positional, flags):
     screen = Screen(window.geometry.screen)
     x, y = screen.percent_to_pixel(x_percent, y_percent)
     w, h = screen.percent_to_pixel(w_percent, h_percent)
-    xdotool('windowmove', window.id, x, y, 'windowsize', window.id, w, h)
+    x -= window.geometry.insets.left
+    w += window.geometry.insets.left + window.geometry.insets.right
+    h += window.geometry.insets.top + window.geometry.insets.bottom
+    window.move_and_resize(x, y, w, h, exact_pixels=True)
 
 
 def print_window_props(positional, flags):
@@ -1069,15 +1102,25 @@ def get_geometry(wid):
       continue
     ppm = POSITION_PATTERN.search(line)
     if ppm is not None:
-      geom.x = ppm.group('x')
-      geom.y = ppm.group('y')
+      geom.x = int(ppm.group('x'))
+      geom.y = int(ppm.group('y'))
       geom.screen = ppm.group('screen')
       continue
     gpm = GEOMETRY_PATTERN.search(line)
     if gpm is not None:
-      geom.width = gpm.group('width')
-      geom.height = gpm.group('height')
+      geom.width = int(gpm.group('width'))
+      geom.height = int(gpm.group('height'))
+  geom.insets = get_decoration_insets(wid)
   return geom
+
+
+def get_decoration_insets(wid):
+  xwininfo = check_output(['xwininfo', '-all', '-id', str(wid)]).decode('utf-8').split('\n')
+  for line in xwininfo:
+    if 'Frame extents:' not in line:
+      continue
+    return Insets(*(int(s.strip()) for s in line[line.find(':')+1:].split(',')))
+  return Insets(0, 0, 0, 0)
 
 
 def get_desktop_windows():

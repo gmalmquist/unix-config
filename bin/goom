@@ -370,20 +370,10 @@ class SwapWindows(WindowAction):
 
   def execute(self, active):
     selected = Window(xdotool('selectwindow'))
-    sgeom = selected.geometry
-    ageom = active.geometry
-    selected.move_and_resize(
-      ageom.x - ageom.insets.left,
-      ageom.y,
-      ageom.width + ageom.insets.right + ageom.insets.left,
-      ageom.height + ageom.insets.bottom + ageom.insets.top,
-      exact_pixels=True)
-    active.move_and_resize(
-      sgeom.x - sgeom.insets.left,
-      sgeom.y,
-      sgeom.width + sgeom.insets.right + sgeom.insets.left,
-      sgeom.height + sgeom.insets.bottom + sgeom.insets.top,
-      exact_pixels=True)
+    active_bounds = active.outer_bounds
+    selected_bounds = selected.outer_bounds
+    active.outer_bounds = selected_bounds
+    selected.outer_bounds = active_bounds
 
   def render_text(self):
     return 'Swap Windows'
@@ -596,6 +586,7 @@ class Window(object):
     self._props = None
     self._insets = None
     self._move_adjustment = None
+    self._calibrating = False
 
   def clear_cache(self):
     """Window properties are cached to avoid shelling out to xprops/xdotool more than necessary.
@@ -679,12 +670,17 @@ class Window(object):
 
   @inner_bounds.setter
   def inner_bounds(self, rectangle):
-    target = Rectangle(*map(int, rectangle))
-    if self._move_adjustment is not None:
-      target = target + self._move_adjustment
-    xdotool('windowsize', self.id, round(target.w), round(target.h))
-    xdotool('windowmove', self.id, round(target.x), round(target.y))
-    self.clear_cache()
+    for attempt in range(2):
+      target = Rectangle(*map(int, rectangle))
+      if self._move_adjustment is not None:
+        target = target + self._move_adjustment
+      xdotool('windowsize', self.id, round(target.w), round(target.h))
+      xdotool('windowmove', self.id, round(target.x), round(target.y))
+      self.clear_cache()
+      if attempt or target == self.geometry.rect or self._move_adjustment is not None:
+        return
+      self._calibrate_move_adjustment()
+      
 
   @property
   def outer_bounds(self):
@@ -719,6 +715,9 @@ class Window(object):
     xdotool('windowsize', self.id, w, h)
 
   def _calibrate_move_adjustment(self):
+    if self._calibrating:
+      return
+    self._calibrating = True
     self.clear_cache()
     self._move_adjustment = None
     screen = self.screen
@@ -763,75 +762,10 @@ class Window(object):
     target = Rectangle(x, y, w, h)
     self.outer_bounds = target
     bounds = self.outer_bounds
-    if bounds != target:
-      self._calibrate_move_adjustment()
-      self.outer_bounds = target
-      bounds = self.outer_bounds
-    delta = bounds - target
 
     if bounds.y < target.y:
       # Seems that we ran into the bottom, and got pushed back up.
       self.outer_bounds += (0, target.y - bounds.y, 0, bounds.y - target.y)
-
-   # for c_x, c_y in self.outer_bounds.corners:
-   #   xdotool('mousemove', c_x, c_y)
-   #   xdotool('selectwindow')
-
-   # for c_x, c_y in self.inner_bounds.corners:
-   #   xdotool('mousemove', c_x, c_y)
-   #   xdotool('selectwindow')
-
-    if True:
-      return
-
-    xdotool('windowsize', self.id, w, h)
-    xdotool('windowmove', self.id, x, y)
-    # Sometimes we don't end up quite where we wanted, because
-    # we hit the edge of the screen. Correct the x,y position here:
-    self.clear_cache()
-    if 'Firefox' in self.classes:
-      print(*self.classes)
-      print('tgt:', x, y, w, h)
-      print('new:', self.geometry.x, self.geometry.y, self.geometry.width, self.geometry.height)
-      print('0 Delta x/y', int(self.geometry.x) - x, int(self.geometry.y) - y)
-      print('0 Delta w/h', int(self.geometry.width) - w, int(self.geometry.height) - h)
-    new_x, new_y = map(int, [self.geometry.x, self.geometry.y])
-    delta_x, delta_y = new_x - x - insets.left, new_y - y
-    # TODO: This is wonky.
-    if delta_x == 0 and (delta_y == 0 or delta_y == insets.top):
-      return
-
-    target_x, target_y = x, y
-    target_w, target_h = w, h
-
-    if delta_x < 0:
-      # We were too wide, and got shunted left.
-      target_x += abs(delta_x)
-      target_w -= abs(delta_x)
-    elif delta_x > 0:
-      # We went farther left than the desktop supports.
-      target_w -= abs(delta_x)
-
-    if delta_y < 0:
-      # We tried to go too far down, and got shunted up.
-      target_y += abs(delta_y) + insets.top
-      target_h -= abs(delta_y) + insets.top
-    elif delta_y > 0:
-      # We went farther up than the desktop supports.
-      target_y = 0
-      pass
-
-    xdotool('windowsize', self.id, target_w, target_h)
-    xdotool('windowmove', self.id, target_x, target_y)
-
-    # Below just for debugging.
-    #self.clear_cache()
-    #new_w, new_h = map(int, [self.geometry.width, self.geometry.height])
-    #delta_w, delta_h = new_w - w, new_h - h
-    #print('1 Delta x/y', int(self.geometry.x) - x, int(self.geometry.y) - y)
-    #print('1 Delta w/h', int(self.geometry.width) - w, int(self.geometry.height) - h)
-    #print(self.geometry.x, self.geometry.y, self.geometry.width, self.geometry.height)
-    #print()
 
 
 class Insets(namedtuple('Insets', ['left', 'right', 'top', 'bottom'])):

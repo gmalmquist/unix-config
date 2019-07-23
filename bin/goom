@@ -27,10 +27,6 @@ from textwrap import dedent
 # * xdotool  (to move and resize windows)
 # * xwininfo (more window metadata)
 
-# Inset for positioning windows. This accounts for window decorations the window manager adds that
-# exceed the nominal window boundaries.
-INSET = (4, 16) # x, y
-
 # Don't allow sequences of hotkey chords longer than this.
 MAX_CORD_SEQUENCE = 4
 
@@ -95,6 +91,104 @@ KEY_NORMALIZE = {
   'Super_L': 'Super',
   'Super_R': 'Super',
 }
+
+
+class Rectangle(namedtuple('Rectangle', ['x', 'y', 'w', 'h'])):
+  @property
+  def width(self):
+    return self.w
+
+  @property
+  def height(self):
+    return self.h
+
+  @property
+  def top(self):
+    return self.y
+
+  @property
+  def left(self):
+    return self.x
+
+  @property
+  def bottom(self):
+    return self.y + self.h
+
+  @property
+  def right(self):
+    return self.x + self.w
+
+  def _apply_scalar(self, s, f):
+    return Rectangle(*(f(e, s) for e in self))
+
+  def _apply_rect(self, rect, f):
+    return Rectangle(*(f(a, b) for a, b in zip(self, rect)))
+
+  def _apply(self, other, f):
+    if hasattr(other, '__len__') and len(other) == len(self):
+      return self._apply_rect(other, f)
+    return self._apply_scalar(other, f)
+
+  def __add__(self, other):
+    return self._apply_rect(other, lambda a, b: a + b)
+
+  def __radd__(self, other):
+    return self._apply_rect(other, lambda a, b: a + b)
+
+  def __mul__(self, other):
+    return self._apply(other, lambda a, b: a * b)
+
+  def __neg__(self, other):
+    return self._apply_scalar(-1, lambda a, b: a * b)
+
+  def __div__(self, other):
+    return self._apply(other, lambda a, b: a / b)
+
+  def __sub__(self, other):
+    return self._apply_rect(other, lambda a, b: a - b)
+
+  def __repr__(self):
+    return '(x={} y={} w={} h={})'.format(*self)
+
+  def lerp(self, other, f):
+    return self._apply_rect(other, lambda a, b: (1-f)*a + f*b)
+
+
+class Settings(object):
+  _DEFAULTS = {
+    'daemon_port': DAEMON_PORT,
+    'move_duration': 1,
+    'move_fps': 60,
+  }
+  _CACHE = dict(_DEFAULTS)
+
+  @classmethod
+  def clear_cache(cls):
+    cls._CACHE = None
+
+  @classmethod
+  def load(cls):
+    if not os.path.exists('settings/config.json'):
+      return False
+    with open_cache_file('settings/config.json', 'r') as f:
+      cls._CACHE = json.loads(f.read())
+    return True
+
+  @classmethod
+  def save(cls):
+    with open_cache_file('settings/config.json', 'w') as f:
+      f.write(json.dumps(cls._CACHE, indent=2, sort_keys=True))
+
+  def __getattr__(self, name):
+    if name not in Settings._DEFAULTS:
+      raise AttributeError('No such setting "{}"'.format(name))
+    return Settings._CACHE.get(name, Settings._DEFAULTS.get(name))
+
+  def __setattr__(self, name, value):
+    if name not in Settings._DEFAULTS:
+      raise AttributeError('No such setting "{}"'.format(name))
+    Settings._CACHE[name] = value
+    Settings.save()
 
 
 class CliCommand(object):
@@ -411,7 +505,7 @@ class CommandServer(BaseHTTPRequestHandler):
     try:
       KeyChords.load()
       print('Starting server ...')
-      server = HTTPServer(('localhost', DAEMON_PORT), cls)
+      server = HTTPServer(('localhost', Settings().daemon_port), cls)
       server.serve_forever()
     except KeyboardInterrupt:
       print('Keyboard interrupt, shutting down.')
@@ -566,6 +660,39 @@ class Window(object):
     """The Screen object for the screen this window is currently displayed on."""
     return Screen(self.geometry.screen)
 
+  @property
+  def inner_bounds(self):
+    return self.geometry.rect
+
+  @inner_bounds.setter
+  def inner_bounds(self, rectangle):
+    target = Rectangle(*map(int, rectangle))
+    xdotool('windowsize', self.id, round(target.w), round(target.h))
+    xdotool('windowmove', self.id, round(target.x), round(target.y))
+    self.clear_cache()
+
+  @property
+  def outer_bounds(self):
+    inner = self.inner_bounds
+    insets = self.geometry.insets
+    return inner + (
+      -insets.left,
+      -insets.top,
+      insets.left + insets.right,
+      insets.top + insets.bottom,
+    )
+
+  @outer_bounds.setter
+  def outer_bounds(self, rectangle):
+    target = Rectangle(*map(int, rectangle))
+    insets = self.geometry.insets
+    self.inner_bounds = target + (
+      insets.left,
+      insets.top,
+      -(insets.left + insets.right),
+      -(insets.top + insets.bottom),
+    )
+
   def move(self, percent_x, percent_y):
     screen = self.screen
     x, y = screen.percent_to_pixel(percent_x, percent_y)
@@ -596,21 +723,6 @@ class Window(object):
       # Input parameters were actually literal pixels.
       x, y, w, h = map(float, (percent_x, percent_y, percent_w, percent_h))
 
-    insets = self.geometry.insets
-    #x -= insets.left
-    #y -= insets.top
-    w -= insets.left #+ insets.right
-    h -= insets.bottom + insets.top
-
-    if x <= insets.left:
-      # The math here doesn't really make
-      # sense (I think it should just be -x),
-      # but this seems to work.
-      w -= x + insets.left
-      x = 0
-
-    print('insets', insets)
-
     if float(percent_x) < 0:
       x = int(self.geometry.x)
     if float(percent_y) < 0:
@@ -619,6 +731,40 @@ class Window(object):
       w = int(self.geometry.width)
     if float(percent_h) < 0:
       h = int(self.geometry.height)
+
+    settings = Settings()
+    start = time.time()
+    orig = self.outer_bounds
+    target = Rectangle(x, y, w, h)
+    print('orig', orig)
+    print('targ', target)
+    last_frame = orig
+    while settings.move_fps > 0 and settings.move_duration > 0:
+      now = time.time()
+      f = min((now - start) / settings.move_duration, 1)
+      self.clear_cache()
+      last_delta = target - self.geometry.rect
+      frame = orig.lerp(target, f)
+      self.outer_bounds = frame
+
+      delta = target - self.geometry.rect
+      print(' t   ', target)
+      print(' f   ', frame)
+      print(' d0  ', last_delta)
+      print('  d1 ', delta)
+
+      if now - start >= settings.move_duration:
+        break
+      last_frame = frame
+      time.sleep(1.0 / settings.move_fps)
+
+    bounds = self.outer_bounds
+    if bounds.y < target.y:
+      # Did we run into the bottom?
+      self.outer_bounds = (bounds.x, target.y, bounds.w, target.h - abs(bounds.y - target.y))
+
+    if True:
+      return
 
     xdotool('windowsize', self.id, w, h)
     xdotool('windowmove', self.id, x, y)
@@ -698,6 +844,10 @@ class Geometry(object):
         insets = {insets}
       )
     ''').strip().format(**self.as_dict())
+
+  @property
+  def rect(self):
+    return Rectangle(*map(float, (self.x, self.y, self.width, self.height)))
 
   def as_dict(self):
     screen = Screen(self.screen)
@@ -1254,7 +1404,7 @@ def main(positional, flags):
     command_tokens = positional + ['--{}={}'.format(k, v) for k, v in flags.items()]
     try:
       with urllib.request.urlopen('http://localhost:{port}/{command_string}'.format(
-        port=DAEMON_PORT,
+        port=Settings().daemon_port,
         command_string='/'.join(command_tokens))) as f:
         print (f.read().decode('utf-8'))
         return

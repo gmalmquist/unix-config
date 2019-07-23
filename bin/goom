@@ -769,15 +769,9 @@ class Window(object):
       bounds = self.outer_bounds
     delta = bounds - target
 
-    if target != bounds:
-      target = target - delta
-      print('Shifting to', target)
-      self.outer_bounds = target
-      bounds = self.outer_bounds
-
     if bounds.y < target.y:
-      # Did we run into the bottom?
-      self.outer_bounds = (bounds.x, target.y, bounds.w, target.h - abs(bounds.y - target.y))
+      # Seems that we ran into the bottom, and got pushed back up.
+      self.outer_bounds += (0, target.y - bounds.y, 0, bounds.y - target.y)
 
    # for c_x, c_y in self.outer_bounds.corners:
    #   xdotool('mousemove', c_x, c_y)

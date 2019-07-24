@@ -580,13 +580,17 @@ class Window(object):
   Shells out to xprops and xdotool to determine window properties, and xdotool to
   move and resize the window.
   """
+
+  _ADJUST_BY_TYPE = {}
+
   def __init__(self, id):
     self.id = id
     self._geometry = None
     self._props = None
     self._insets = None
-    self._move_adjustment = None
+    self._move_adjustment = Window._ADJUST_BY_TYPE.get(tuple(self.classes))
     self._calibrating = False
+    self._calibrated = self._move_adjustment is not None
 
   def clear_cache(self):
     """Window properties are cached to avoid shelling out to xprops/xdotool more than necessary.
@@ -677,10 +681,9 @@ class Window(object):
       xdotool('windowsize', self.id, round(target.w), round(target.h))
       xdotool('windowmove', self.id, round(target.x), round(target.y))
       self.clear_cache()
-      if attempt or target == self.geometry.rect or self._move_adjustment is not None:
+      if attempt or target == self.geometry.rect or self._calibrated:
         return
       self._calibrate_move_adjustment()
-      
 
   @property
   def outer_bounds(self):
@@ -728,7 +731,8 @@ class Window(object):
     self.inner_bounds = target_inner
     new_inner_bounds = self.inner_bounds
     self._move_adjustment = target_inner - new_inner_bounds
-    print('Move Adjustment', self._move_adjustment)
+    self._calibrated = True
+    Window._ADJUST_BY_TYPE[tuple(self.classes)] = self._move_adjustment
 
   def move_and_resize(self,
       percent_x,

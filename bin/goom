@@ -968,10 +968,7 @@ def load_window_state(positional, flags):
     screen = Screen(window.geometry.screen)
     x, y = screen.percent_to_pixel(x_percent, y_percent)
     w, h = screen.percent_to_pixel(w_percent, h_percent)
-    x -= window.geometry.insets.left
-    w += window.geometry.insets.left + window.geometry.insets.right
-    h += window.geometry.insets.top + window.geometry.insets.bottom
-    window.move_and_resize(x, y, w, h, exact_pixels=True)
+    window.inner_bounds = (x, y, w, h)
 
 
 def print_window_props(positional, flags):

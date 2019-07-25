@@ -1,0 +1,26 @@
+#!/usr/bin/env python3
+
+from subprocess import check_output, Popen, PIPE
+
+
+def bin(*cmd, **kwargs):
+  p = Popen(cmd, stdout=PIPE, stderr=PIPE)
+  out, err = p.communicate()
+  if p.returncode != 0:
+    raise ValueError(p.returncode)
+  return out.decode('utf8').strip()
+
+branch = bin('git', 'rev-parse', '--abbrev-ref', 'HEAD')
+index = 0
+while True:
+  index += 1
+  branch_name = '{}-{}'.format(branch, index)
+  try:
+    bin('git', 'checkout', '-b', branch_name)
+    break
+  except ValueError as e:
+    continue
+
+bin('git', 'checkout', branch)
+
+print(branch_name)

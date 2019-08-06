@@ -93,6 +93,28 @@ KEY_NORMALIZE = {
 }
 
 
+class Point(namedtuple('Point', ['x', 'y'])):
+  def _apply_scalar(self, s, f):
+    return Point(*(f(e, s) for e in self))
+
+  def _apply_point(self, point, f):
+    return Point(*(f(a, b) for a, b in zip(self, point)))
+
+  def _apply(self, other, f):
+    if hasattr(other, '__len__') and len(other) == len(self):
+      return self._apply_point(other, f)
+    return self._apply_scalar(other, f)
+
+  def __add__(self, other):
+    return self._apply(other, lambda a, b: a + b)
+
+  def __mul__(self, other):
+    return self._apply_scalar(other, lambda a, b: a * b)
+
+  def __neg__(self, other):
+    return self._apply_scalar(-1, lambda a, b: a * b)
+
+
 class Rectangle(namedtuple('Rectangle', ['x', 'y', 'w', 'h'])):
   @property
   def width(self):
@@ -495,6 +517,7 @@ class CommandServer(BaseHTTPRequestHandler):
     if old_pid is not None:
       try:
         check_output(['kill', '-9', old_pid])
+        time.sleep(0.5) # Wait for the port to be released.
       except:
         pass # It probably wasn't actually running.
     with open_cache_file('daemon.pid', 'w') as f:
@@ -581,14 +604,12 @@ class Window(object):
   move and resize the window.
   """
 
-  _ADJUST_BY_TYPE = {}
-
   def __init__(self, id):
     self.id = id
     self._geometry = None
     self._props = None
     self._insets = None
-    self._move_adjustment = Window._ADJUST_BY_TYPE.get(tuple(self.classes))
+    self._move_adjustment = None
     self._calibrating = False
     self._calibrated = self._move_adjustment is not None
 
@@ -681,9 +702,14 @@ class Window(object):
       xdotool('windowsize', self.id, round(target.w), round(target.h))
       xdotool('windowmove', self.id, round(target.x), round(target.y))
       self.clear_cache()
-      if attempt or target == self.geometry.rect or self._calibrated:
+      delta = target - self.geometry.rect
+      if target == self.geometry.rect:
         return
-      self._calibrate_move_adjustment()
+      if attempt == 0:
+        self._calibrate_move_adjustment()
+        continue
+    self._move_adjustment = None
+    self._calibrated = False
 
   @property
   def outer_bounds(self):
@@ -722,17 +748,20 @@ class Window(object):
       return
     self._calibrating = True
     self.clear_cache()
-    self._move_adjustment = None
     screen = self.screen
     original = self.inner_bounds
+    self._move_adjustment = None
     target_inner = Rectangle(
       *screen.percent_to_pixel(25, 25),
       *screen.percent_to_pixel(25, 25))
     self.inner_bounds = target_inner
     new_inner_bounds = self.inner_bounds
-    self._move_adjustment = target_inner - new_inner_bounds
+
+    new_adjust = target_inner - new_inner_bounds
+    self._move_adjustment = new_adjust
+
     self._calibrated = True
-    Window._ADJUST_BY_TYPE[tuple(self.classes)] = self._move_adjustment
+    self._calibrating = False
 
   def move_and_resize(self,
       percent_x,

@@ -375,3 +375,77 @@ problem:
 `System Settings > Window Management > Window Behavior`
 If you set the snap zone size of everthing to `0`, it disables snapping.
 
+## Visual Studio Code
+```
+pacaur -S aur/visual-studio-code-bin
+```
+
+## Bump fs watches
+Follow instructions here
+
+```
+https://github.com/webpack/docs/wiki/troubleshooting#not-enough-watchers
+```
+
+## Auto Mount Blade HDD
+Added this to my `/etc/fstab`:
+
+```
+UUID=5C8C8D8D8C8D61FE /run/media/bladehdd ntfs    defaults,noatime,discard,umask=0002,gid=1000,uid=1000 0 2
+```
+
+I found the UUID by running `lsblk -f`.
+
+## Setting up Unity3D + Visual Studio Code
+Install Unity from the unity website. It'll drop a `.AppImage` file in
+`~/Applications`. You won't be able to launch it normally, but running
+`primusrun ~/Applications/UnityHub*.AppImage` works.
+
+Configure where you want it to put Unity installs. I did set it to
+`/opt/Unity3D`, which I first created with:
+
+```
+sudo mkdir /opt/Unity3D
+sudo chown gmalmquist:gmalmquist /opt/Unity3D
+```
+
+Installed the latest stable version, then created a project. It likes
+creating the projects in the home directory, so I closed the UnityHub,
+manually moved the project to my subdirectory of choice, relaunched
+the hub, re-added the project (Add rather than New, then select the
+folder), and launched it.
+
+This worked for unity, but more work to do to get Visual Studio Code
+working with it.
+
+Loosely followed: https://medium.com/@sami1592/set-up-visual-studio-code-for-unity-in-linux-69b7f4352e0b
+
+I say loosely because I had to improvise / google a lot of stuff
+because everything assumes Debian flavors.
+
+To get dotnet, I followed the instructions here:
+https://snapcraft.io/install/dotnet-sdk/manjaro
+```
+sudo pacman -S snapd
+sudo systemctl enable --now snapd.socket
+sudo ln -s /var/lib/snapd/snap /snap
+```
+
+Restart the computer here or else the next step will claim it
+completes successfully, but actually will not.
+```
+sudo snap install dotnet-sdk --classic
+```
+
+Install mono:
+```
+sudo pacman -S mono
+```
+
+Restart again. Open unity, change editor preference to vs code,
+as per the medium article linked above.
+
+> Step 3 : Change your code editor preference in Unity.
+> Unity->preferences->External tools: /usr/bin/code
+
+

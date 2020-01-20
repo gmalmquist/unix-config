@@ -448,4 +448,14 @@ as per the medium article linked above.
 > Step 3 : Change your code editor preference in Unity.
 > Unity->preferences->External tools: /usr/bin/code
 
+## Android Studio
+Followed this: https://linuxconfig.org/how-to-install-android-studio-on-manjaro-18-linux
 
+```
+git clone https://aur.archlinux.org/android-studio
+cd android-studio/
+makepkg -s
+ls *pkg.tar.xz
+sudo pacman -U --noconfirm android-studio-3.2.1.0-1-x86_64.pkg.tar.xz
+android-studio
+```

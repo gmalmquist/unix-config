@@ -459,3 +459,8 @@ ls *pkg.tar.xz
 sudo pacman -U --noconfirm android-studio-3.2.1.0-1-x86_64.pkg.tar.xz
 android-studio
 ```
+
+## Rust
+```
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+```

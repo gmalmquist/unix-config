@@ -169,8 +169,8 @@ yay -S polychromatic
 
 ## Setup git
 ```
-git config --global user.email "garrett.malmquist@gmail.com"
-git config --global user.name "Garrett Malmquist"
+git config --global user.email "gdmalmquist@gmail.com"
+git config --global user.name "Gwen Malmquist"
 git config --global core.editor vim
 ```
 
@@ -289,7 +289,7 @@ yay -S xdotool
 
 Bind window management keys mirroring my moom setup, by
 opening the `System Settings` menu, and adding new
-custom shortcuts at `Shortcuts > Custum Shortcuts`. I put
+custom shortcuts at `Shortcuts > Custom Shortcuts`. I put
 the shortcuts in a new group called "Goom".
 
 ### Bind CTRL 1, 2, 3 to vertical thirds

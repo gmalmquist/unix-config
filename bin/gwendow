@@ -25,7 +25,8 @@ class Geometry(namedtuple('Geometry', ['width', 'height', 'x', 'y'])):
       self.x + self.width * geom.x,
       self.y + self.height * geom.y
     ) 
-
+  def __sub__(self, other):
+    return Geometry(self.width - other.width, self.height - other.height, self.x - other.x, self.y - other.y)
 
 def get_window_geometry():
   for line in check_output(['xdotool', 'getactivewindow', 'getwindowgeometry']).decode('utf8').splitlines():
@@ -69,22 +70,63 @@ def find_display():
 
 def get_preset(pos):
   return {
-    '1': Geometry(1/3, 1.0, 0, 0),
-    '2': Geometry(1/3, 1.0, 1/3, 0),
-    '3': Geometry(1/3, 1.0, 2/3, 0),
+    # thirds
+    't1': Geometry(1/3, 1.0, 0/3, 0.0),
+    't2': Geometry(1/3, 1.0, 1/3, 0.0),
+    't3': Geometry(1/3, 1.0, 2/3, 0.0),
+    # 2x3 grid
+    'x1': Geometry(1/3, 1/2, 0/3, 0/2),
+    'x2': Geometry(1/3, 1/2, 1/3, 0/2),
+    'x3': Geometry(1/3, 1/2, 2/3, 0/2),
+    'x4': Geometry(1/3, 1/2, 0/3, 1/2),
+    'x5': Geometry(1/3, 1/2, 1/3, 1/2),
+    'x6': Geometry(1/3, 1/2, 2/3, 1/2),
+    # fourths
+    'f1': Geometry(1/4, 1.0, 0/4, 0.0),
+    'f2': Geometry(1/4, 1.0, 1/4, 0.0),
+    'f3': Geometry(1/4, 1.0, 2/4, 0.0),
+    'f4': Geometry(1/4, 1.0, 3/4, 0.0),
+    # 4x4 grid (omitting the middle)
+    'o1': Geometry(1/4, 1/2, 0/4, 0/2),
+    'o2': Geometry(1/4, 1/2, 0/4, 1/2),
+    'o3': Geometry(1/4, 1/2, 3/4, 0/2),
+    'o4': Geometry(1/4, 1/2, 3/4, 1/2),
+    # centered
+    'c': Geometry(1/2, 1.0, 1/4, 0.0),
+    # full screen
+    'f': Geometry(1.0, 1.0, 0.0, 0.0),
   }[str(pos).strip()]
 
+
+def move_window(geom):
+  check_output([str(s) for s in (
+    'xdotool', 'getactivewindow',
+    'windowsize', geom.width, geom.height,
+    'windowmove', geom.x, geom.y,
+    'windowsize', geom.width, geom.height,
+  )])
+
+
+def move_to(target):
+  move_window(target)
+  result = get_window_geometry()
+  delta = result - target
+  if delta.y < 0:
+    # we hit the bottom and got pushed up
+    target = target - Geometry(0, -delta.y, 0, 0) 
+  if delta.y > 0:
+    # we got pushed down by window decoration
+    target = target - Geometry(0, delta.y, 0, 0) 
+  move_window(target) 
 
 def move(pos, *args):
   window = get_window_geometry()
   display = find_display()
   geom = get_preset(pos)
   geom = display.project(geom)
-  check_output([str(s) for s in (
-    'xdotool', 'getactivewindow',
-    'windowmove', geom.x, geom.y,
-    'windowsize', geom.width, geom.height,
-  )])  
+  print('trying to move to', geom)
+  move_to(geom)
+  print('actually moved to', get_window_geometry())
  
 
 def main(cmd, *args):
@@ -93,3 +135,4 @@ def main(cmd, *args):
 
 if __name__ == '__main__':
   main(*sys.argv[1:])
+
